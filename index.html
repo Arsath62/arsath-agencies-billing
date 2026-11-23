@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
+<title>ARSATH AGENCIES — Sales Billing App</title>
+<meta name="description" content="Offline GST sales billing app for ARSATH AGENCIES, Palani, Dindigul, Tamil Nadu. Party-wise rates, customers, invoices, payment tracking and daily reports.">
+<meta name="theme-color" content="#1E293B">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ARSATH AGENCIES">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-32.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- ========== 1. SPLASH SCREEN ========== -->
+<div id="splash" class="splash" aria-hidden="true">
+  <div class="splash-logo">
+    <span class="splash-mark">AA</span>
+  </div>
+  <h1 class="splash-brand">ARSATH AGENCIES</h1>
+  <p class="splash-tag">Sales Billing App</p>
+  <p class="splash-place">Palani &middot; Dindigul &middot; Tamil Nadu</p>
+  <div class="splash-bar"><i></i></div>
+  <p class="splash-credit">Designed by <b>Mr. Arsathkhan</b></p>
+</div>
+
+<!-- ========== APP SHELL ========== -->
+<div id="app" class="app" hidden>
+
+  <!-- Top app bar -->
+  <header class="appbar">
+    <button id="btnBack" class="icon-btn" type="button" aria-label="Go back" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="appbar-logo" id="appbarLogo">AA</div>
+    <div class="appbar-title">
+      <strong id="appTitle">ARSATH AGENCIES</strong>
+      <span id="appSub">Sales Billing App</span>
+    </div>
+    <div class="appbar-actions" id="appActions"></div>
+  </header>
+
+  <!-- Screens -->
+  <main id="screen" class="screen" role="main"></main>
+
+  <!-- Bottom navigation -->
+  <nav class="bottomnav" id="bottomNav" aria-label="Main navigation"></nav>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="modalRoot"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
