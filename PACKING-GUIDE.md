@@ -87,6 +87,18 @@ breakdown under the item name, e.g. `5 sheet × 14 packet · 1,139.00/sheet`.
 * The per-packet rate stored for GST/profit is `1,100 ÷ 14 = ₹78.5714…` at **full precision**, so
   `70 × 78.5714… = ₹5,500.00` exactly — no missing paise.
 
+### When this batch differs (12 packets a sheet, not 14)
+
+The packing sheet is the **catalogue**; a single batch can be different. On the line,
+**`packet / pack`** is named after what it counts — *packet per sheet* on a sheet line,
+*sheets per box* on a box line — and changing it re-derives the rest:
+
+* sheet line, 12 → `5 sheets × 12 = 60 packets`
+* box line, 12 → `1 box = 12 sheets of 14 = 168 packets` (not 12!)
+* the price you typed is kept, so `1 sheet @ ₹1,100` stays ₹1,100 whatever the batch.
+
+Each line also states it plainly underneath: **"This batch: 1 box = 20 sheets = 280 packets"**.
+
 ### More sheets than a full box?
 
 Type `25` in the sheet box and the app sees you have passed one full box (20 sheets) and switches

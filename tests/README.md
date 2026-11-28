@@ -3,7 +3,7 @@
 Plain Node, **no dependencies**. Run them from the project folder before publishing.
 
 ```bash
-node tests/run-tests.js        # 129 checks · exit code 1 on any failure
+node tests/run-tests.js        # 151 checks · exit code 1 on any failure
 node tests/smoke-screens.js    # renders every screen; throws if any template breaks
 ```
 
@@ -25,6 +25,8 @@ node tests/smoke-screens.js    # renders every screen; throws if any template br
 | 12 | switching packets ↔ sheets ↔ boxes keeps the goods and typed price |
 | 13 | a box conversion can be reversed exactly |
 | 14 | typing more sheets than a box switches to boxes, money unchanged |
+| 15 | a batch with a different sheet size on the line (box = 12 sheets = 168 packets) |
+| 16 | "was this stock counted in boxes?" is asked once, answered once, and never doubles stock |
 
 ## How it works
 

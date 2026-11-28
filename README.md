@@ -25,7 +25,7 @@ the weekly routine. See `BACKUP-GUIDE.md`.
 ## Before a release
 
 ```bash
-node tests/run-tests.js        # 129 checks
+node tests/run-tests.js        # 151 checks
 node tests/smoke-screens.js    # every screen renders
 ```
 
