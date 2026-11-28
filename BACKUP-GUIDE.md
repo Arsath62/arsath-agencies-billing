@@ -85,6 +85,15 @@ on this phone (last 5 minutes of work). This is useful for a mistake, but:
 
 Old backups from earlier versions of the app are upgraded automatically — nothing is lost.
 
+**v5.4 backups carry the box/sheet setup too.** Files saved by v5.4 and later include each
+product's pack rows (`1 box = 20 sheets of 14 packets`), the sheet price you typed on each bill, the
+per-packet cost of every bill line and the stock ledger with its "converted from boxes" entries.
+Restoring such a file brings all of it back exactly. A v5.3 file still restores: its pack rows and
+bill lines are upgraded with the same totals they always had.
+
+**Check after restoring:** Stock shows the same packets as before, and a bill that had
+`5 sheet × 14 @ ₹1,139` still prints and totals ₹5,695.00.
+
 ---
 
 ## For the developer: proof files in the project folder
@@ -94,3 +103,5 @@ Old backups from earlier versions of the app are upgraded automatically — noth
   *save → wipe all storage → restore → all 7 collections and the grand total identical*.
   ⚠️ It contains **demo data**. Never restore it into a real shop app.
 * `tools/verify-backup.js` — re-runs that whole round-trip from the current source.
+* `tests/run-tests.js` §8 — proves a v5.4 backup restores boxes, sheets, typed sheet prices, the
+  cost and the stock count, and that a **v5.3** file still restores with its exact totals.

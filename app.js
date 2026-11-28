@@ -84,7 +84,7 @@ function initials(name) {
 }
 
 /* Software credit — shown on every customer bill and inside the app */
-const APP_VERSION = '5.3';   // visible in the app so an old hosted copy is obvious
+const APP_VERSION = '5.4';   // visible in the app so an old hosted copy is obvious
 const APP_CREDIT = { by: 'Mr. Arsathkhan', line: 'Billing software designed by Mr. Arsathkhan', mono: 'AK' };
 const OLD_DEFAULT_NOTE = 'Goods once sold will not be taken back. Interest @18% p.a. will be charged on overdue bills.';
 const NEW_DEFAULT_NOTE = 'Kindly verify the quantity and condition of goods at the time of delivery. Payment is requested on or before the due date. Please quote the invoice number in all correspondence.';
@@ -335,12 +335,49 @@ const stockTracked = (p) => !!(p && p.stock && Array.isArray(p.stock.moves) &&
 /* cost actually used for profit = latest purchase rate, else the product's cost price */
 function effectiveCost(p) {
   if (!p) return 0;
-  const lp = p.lastPurchase;
+  /* The DIRECT ledger lookup is the source of truth: deleting or back-dating a
+     purchase must hand the cost back to whatever was really last. p.lastPurchase
+     / p.cost are only a cache (and the fallback for bills imported from v2,
+     which predate the purchase ledger). */
+  let lp = null;
+  try { lp = db && db.purchases ? lastPurchaseOf(p.id) : null; } catch (e) { lp = null; }
   if (lp) {
     if (num(lp.unitCost) > 0) return r2(num(lp.unitCost));
     if (num(lp.rate) > 0) return r2(num(lp.rate));
   }
+  if (p.lastPurchase) {
+    if (num(p.lastPurchase.unitCost) > 0) return r2(num(p.lastPurchase.unitCost));
+    if (num(p.lastPurchase.rate) > 0) return r2(num(p.lastPurchase.rate));
+  }
   return r2(num(p.cost));
+}
+/* WHO is the current cost of this item, in words, for internal screens. */
+function effectiveCostInfo(p) {
+  if (!p) return { cost: 0, label: '—', kind: 'none', date: '', ref: '', supplier: '' };
+  let lp = null;
+  try { lp = db && db.purchases ? lastPurchaseOf(p.id) : null; } catch (e) { lp = null; }
+  if (lp) {
+    return { cost: r2(num(lp.unitCost) > 0 ? num(lp.unitCost) : num(lp.rate)),
+      label: 'Latest purchase ' + fmtDate(lp.date), kind: 'purchase', date: lp.date, ref: lp.ref || '', supplier: lp.supplier || '' };
+  }
+  if (num(p.cost) > 0) return { cost: r2(num(p.cost)), label: 'Product cost price', kind: 'manual', date: '', ref: '', supplier: '' };
+  return { cost: r2(estimatedCost(p)), label: 'Estimated from margin', kind: 'estimate', date: '', ref: '', supplier: '' };
+}
+/* the landed per-base-unit cost from the newest purchase of this item, or 0 */
+function purchaseCostOf(productId) {
+  let lp = null;
+  try { lp = db && db.purchases ? lastPurchaseOf(productId) : null; } catch (e) { lp = null; }
+  if (!lp) return 0;
+  return r2(num(lp.unitCost) > 0 ? num(lp.unitCost) : num(lp.rate));
+}
+/* Was this product's stock entered in sheets/boxes instead of packets?
+   Older versions counted "2 boxes" as 2 packets; this flags it so the app can
+   offer a one-tap, exact conversion without ever guessing silently. */
+function stockMultiplierFlag(p) {
+  if (!p || !p.stock) return null;
+  const flag = p.stock.mulFlag;
+  if (!flag || !num(flag.mult)) return null;
+  return { mult: num(flag.mult), unit: String(flag.unit || 'pack'), at: flag.at || '' };
 }
 function costSource(p) {
   if (!p) return { label: '—', kind: 'none' };
@@ -353,43 +390,67 @@ function costSource(p) {
   if (num(p.cost) > 0) return { label: 'Product cost price', kind: 'manual', rate: r2(num(p.cost)) };
   return { label: 'Estimated from margin', kind: 'estimate', rate: r2(estimatedCost(p)) };
 }
-function moveStock(p, delta, type, ref, note, date) {
+function moveStock(p, delta, type, ref, note, date, unitInfo) {
   if (!p) return;
   p.stock = p.stock || { qty: 0, moves: [] };
-  p.stock.qty = r2(num(p.stock.qty) + num(delta));
+  const d = r2(num(delta));
+  p.stock.qty = r2(num(p.stock.qty) + d);
   p.stock.moves = p.stock.moves || [];
-  p.stock.moves.push({ id: uid('mv'), date: date || todayISO(), type: type, delta: r2(num(delta)),
-    ref: ref || '', note: note || '', at: nowStamp() });
-  if (p.stock.moves.length > 240) p.stock.moves = p.stock.moves.slice(-240);
+  const mv = { id: uid('mv'), date: date || todayISO(), type: type, delta: d,
+    ref: ref || '', note: note || '', at: nowStamp() };
+  /* What the owner actually entered, e.g. "5 sheet". Stock itself stays in base
+     units; this is only the human wording on the ledger. */
+  if (unitInfo && num(unitInfo.size) > 1) {
+    mv.unitName = String(unitInfo.name || 'pack');
+    mv.unitSize = num(unitInfo.size);
+    mv.unitQty = r2(Math.abs(d) / num(unitInfo.size));
+  }
+  p.stock.moves.push(mv);
+  if (p.stock.moves.length > 400) p.stock.moves = p.stock.moves.slice(-400);
+  /* one move is the same quantity whichever way you count it */
+  if (num(p.stock.mulFlag && p.stock.mulFlag.mult)) delete p.stock.mulFlag;
+  return mv;
+}
+/* Undo a ledger move EXACTLY as it was recorded (used when a bill or a purchase
+   is edited or deleted, including moves made before pack units existed). */
+function reverseMove(p, mv, type, note) {
+  if (!p || !mv) return null;
+  return moveStock(p, -num(mv.delta), type || 'reversal', mv.ref, note || 'Deleted', mv.date, null);
 }
 function stockMovesOf(productId) {
   const p = productById(productId);
   return (p && p.stock && Array.isArray(p.stock.moves)) ? p.stock.moves.slice().reverse() : [];
 }
 /* Every saved sales bill deducts stock exactly once (guarded by _stockApplied). */
+function lineUnitInfo(it) {
+  const pk = linePack(it);
+  if (pk) return { name: pk.name, size: pk.baseSize };
+  return null;
+}
 function applySaleStock(inv) {
   if (!inv || inv._stockApplied) return;
   (inv.items || []).forEach((it) => {
     if (!it || !it.productId) return;
     const p = productById(it.productId);
     if (!p || num(it.qty) <= 0) return;
-    moveStock(p, -num(it.qty), 'sale', inv.invoiceNo || '', (inv.customer && custOf(inv).name) || '', inv.date);
+    const mv = moveStock(p, -num(it.qty), 'sale', inv.invoiceNo || '', (inv.customer && custOf(inv).name) || '', inv.date, lineUnitInfo(it));
+    if (mv && it.id) mv.lineId = it.id;      /* lets an edit undo exactly this move */
   });
   inv._stockApplied = true;
 }
-function reverseSaleStock(inv) {
+function reverseSaleStock(inv, reason) {
   if (!inv || !inv._stockApplied) return;
   (inv.items || []).forEach((it) => {
     if (!it || !it.productId) return;
     const p = productById(it.productId);
     if (!p || num(it.qty) <= 0) return;
-    moveStock(p, num(it.qty), 'reversal', inv.invoiceNo || '', 'Bill deleted', inv.date);
+    moveStock(p, num(it.qty), 'reversal', inv.invoiceNo || '', reason || 'Bill deleted', inv.date);
   });
   inv._stockApplied = false;
 }
 /* Re-applying a saved bill after an edit: undo the old effect, apply the new one. */
 function reapplySaleStock(before, after) {
-  reverseSaleStock(before);
+  if (before) reverseSaleStock(before, 'Bill edited');
   after._stockApplied = false;
   applySaleStock(after);
 }
@@ -416,12 +477,20 @@ function stockSummary() {
 function purchasesOfProduct(productId) {
   return db.purchases.filter((pu) => (pu.items || []).some((it) => it.productId === productId));
 }
+/* (helper declared below, hoisted) — stable ordering for "which purchase is newest" */
 function lastPurchaseOf(productId, exceptId) {
   let best = null;
+  let bestKey = '';
   db.purchases.forEach((pu) => (pu.items || []).forEach((it) => {
     if (it.productId !== productId) return;
     if (exceptId && pu.id === exceptId) return;
-    if (!best || pu.date > best.date || (pu.date === best.date && String(pu.createdAt) > String(best.createdAt))) {
+    /* Newest by document date, then by entry time, then by purchase number —
+       a stable order means deleting the newest bill always falls back to the
+       genuinely previous rate instead of a random one. */
+    const key = String(pu.date || '') + '|' + String(pu.createdAt || '') + '|' +
+      String(purchaseNumberFrom(pu.purchaseNo)).padStart(12, '0');
+    if (!best || key >= bestKey) {
+      bestKey = key;
       best = { date: pu.date, rate: r2(num(it.rate)), unitCost: r2(num(it.unitCost || it.rate)), qty: num(it.qty),
         ref: pu.purchaseNo, supplier: (pu.supplier && pu.supplier.name) || '', id: pu.id };
     }
@@ -432,7 +501,7 @@ function purchaseStats(productId) {
   let qty = 0, value = 0, n = 0, min = Infinity, max = 0;
   db.purchases.forEach((pu) => (pu.items || []).forEach((it) => {
     if (it.productId !== productId) return;
-    const q = num(it.qty), r = num(it.rate);
+    const q = num(it.qty), r = num(it.unitCost || it.rate);
     qty += q; value += q * r; n++;
     if (r < min) min = r;
     if (r > max) max = r;
@@ -507,7 +576,8 @@ function priceFor(product, opts) {
   const base = r2(num(product.rate));
   const out = {
     rate: base, gst: r2(num(product.gst)),
-    cost: r2(num(product.cost)), source: 'default', sourceLabel: 'Default rate',
+    /* the cost behind every new bill's profit: the LATEST purchase cost */
+    cost: r2(effectiveCost(product)), source: 'default', sourceLabel: 'Default rate',
     priceListId: null, partyRateId: null, warn: ''
   };
   /* A stored rate is only usable if it is a real, non-negative number. Without this a
@@ -527,8 +597,11 @@ function priceFor(product, opts) {
       out.rate = prRate;
       const prGst = usable(pr.gst);
       if (prGst !== null) out.gst = prGst;
+      /* The party rate carries a cost, but it must never beat a real purchase:
+         the latest purchase cost is the truth for every new sale. A party cost
+         (or the product cost) is used only while the item has no purchase yet. */
       const prCost = usable(pr.cost);
-      if (prCost !== null) out.cost = prCost;
+      if (prCost !== null && !purchaseCostOf(product.id)) out.cost = prCost;
       out.source = 'party'; out.partyRateId = pr.id || null;
       out.sourceLabel = prRate === 0 ? 'Party rate (free of charge)' : 'Party rate';
       return withWarn(out);
@@ -643,6 +716,11 @@ function migrate(d) {
     if (!p.id) p.id = uid('p');
     p.rate = r2(num(p.rate)); p.gst = r2(num(p.gst));
     p.cost = (p.cost === undefined || p.cost === null || p.cost === '') ? estimatedCost(p) : r2(num(p.cost));
+    /* The purchase ledger overwrites p.cost with the real landed cost. Keep the
+       owner's OWN cost price so removing every purchase restores it instead of
+       leaving a stale figure behind. */
+    if (p.costManual === undefined || p.costManual === null || p.costManual === '') p.costManual = p.cost;
+    p.costManual = r2(num(p.costManual));
     if (!p.unit) p.unit = 'pcs';
     if (p.code == null) p.code = '';
     if (p.minQty == null) p.minQty = '';
@@ -655,14 +733,25 @@ function migrate(d) {
     if (p.lowStock == null) p.lowStock = '';
     if (!p.lastPurchase || typeof p.lastPurchase !== 'object' || !num(p.lastPurchase.rate)) p.lastPurchase = null;
     else p.lastPurchase = { date: p.lastPurchase.date || todayISO(), rate: r2(num(p.lastPurchase.rate)),
-      qty: r2(num(p.lastPurchase.qty)), ref: p.lastPurchase.ref || '', supplier: p.lastPurchase.supplier || '', id: p.lastPurchase.id || null };
+      unitCost: r2(num(p.lastPurchase.unitCost || p.lastPurchase.rate)),
+      qty: r2(num(p.lastPurchase.qty)), ref: p.lastPurchase.ref || '', no: p.lastPurchase.no || '',
+      supplier: p.lastPurchase.supplier || '', id: p.lastPurchase.id || null };
     if (!p.barcode) p.barcode = '';
-    /* v5.3 pack units: sheet / box / carton = N base units */
+    if (p.favourite === undefined) p.favourite = false;
+    /* v5.3/v5.4 pack units: sheet / box / carton.
+       `size` is kept exactly as the owner typed it ("1 box = 20 sheets");
+       `baseSize` is the resolved count in base units (20 x 20 = 400 packets). */
     if (!Array.isArray(p.packs)) p.packs = [];
-    p.packs = p.packs.filter((u) => u && num(u.size) > 0).map((u, i) => ({
-      id: String(u.id || uid('pk')), name: String(u.name || 'pack').trim() || 'pack',
-      size: num(u.size), rate: num(u.rate), cost: num(u.cost)
-    }));
+    p.packs = p.packs.filter((u) => u && num(u.size) > 0).map((u, i) => {
+      const of = u.of && num(u.of.size) > 0
+        ? { name: String(u.of.name || 'pack').trim() || 'pack', size: num(u.of.size) } : null;
+      const baseSize = of ? r2(num(u.size) * of.size) : num(u.size);
+      return { id: String(u.id || uid('pk')), name: String(u.name || 'pack').trim() || 'pack',
+        size: num(u.size), of, baseSize, rate: num(u.rate), cost: num(u.cost) };
+    });
+    /* A stock figure that is not a finite number is a damaged record, not a sale. */
+    if (!isFinite(num(p.stock.qty))) p.stock.qty = 0;
+    p.openStockUnit = String(p.openStockUnit || p.unit || 'pcs');
   });
 
   /* customers: party rates get ids + cost; add assigned price list */
@@ -701,8 +790,9 @@ function migrate(d) {
       it.qty = num(it.qty); it.rate = num(it.rate); it.gst = r2(num(it.gst));
       /* restore the exact pack-derived base rate after a reload */
       if (it.unitMode === 'pack' && num(it.packSize) > 0) {
-        it.qty = r2(num(it.packQty) * num(it.packSize));
-        it.rate = num(it.packRate) / num(it.packSize);
+        if (!(num(it.packBase) > 0)) it.packBase = num(it.packSize);
+        it.qty = r2(num(it.packQty) * num(it.packBase));
+        it.rate = num(it.packRate) / num(it.packBase);
       }
     });
     pu.totals = calcPurchaseTotals(pu.items, pu);
@@ -736,7 +826,10 @@ function migrate(d) {
       }
       it.cost = r2(num(it.cost));
       if (it.qty == null) it.qty = num(it.qty);
-      if (it.unitMode === 'pack' && num(it.packSize) > 0) recomputePackLine(it);
+      if (it.unitMode === 'pack' && num(it.packSize) > 0) {
+        if (!(num(it.packBase) > 0)) it.packBase = num(it.packSize);
+        recomputePackLine(it);
+      }
     });
     iv.totals = calcTotals(iv.items, iv);
     /* a bill whose party was deleted must still render: re-link by id, else placeholder */
@@ -888,114 +981,237 @@ function productPartyCount(productId) {
    ===================================================================== */
 function packUnits(p) {
   const out = [{ key:'base', id:'base', name:String((p && p.unit) || 'pcs'), size:1,
-    rate:num(p && p.rate), cost:num(p && p.cost), isBase:true }];
+    rate:num(p && p.rate), cost:num(p && p.cost), isBase:true, index:-1 }];
   if (!p || !Array.isArray(p.packs)) return out;
   p.packs.forEach((u, i) => {
     if (!u || num(u.size) <= 0) return;
     const key = String(u.id || ('pk-' + i));
     out.push({ key, id:key, name:String(u.name || 'pack'), size:num(u.size),
-      rate:num(u.rate), cost:num(u.cost), isBase:false, index:i });
+      rate:num(u.rate), cost:num(u.cost), isBase:false, index:i,
+      /* "1 box = 20 sheets": a pack may be defined as N of the PREVIOUS pack
+         instead of N base units. baseSize resolves it to base units for stock
+         and cost, while `of` keeps the owner's wording on screen and on bills. */
+      of: u.of ? { name:String(u.of.name || ''), size:num(u.of.size) } : null,
+      baseSize: num(u.baseSize) > 0 ? num(u.baseSize) : num(u.size) });
   });
   return out;
 }
+/* Size of one pack in BASE units (packets). Works for old records (size only)
+   and for chained records (box = 20 sheets => 20 x sheet size). */
+function packBaseSize(u) {
+  if (!u) return 1;
+  if (u.isBase) return 1;
+  if (u.of && num(u.of.size) > 0) return r2(num(u.size) * num(u.of.size));
+  if (num(u.baseSize) > 0) return num(u.baseSize);
+  return num(u.size) > 0 ? num(u.size) : 1;
+}
+/* How a pack is described to the owner: "box = 20 sheet = 400 packet" */
+function packUnitLabel(u, baseUnit) {
+  if (!u) return '';
+  const base = String(baseUnit || 'pcs');
+  if (u.isBase) return base + ' (single)';
+  const total = packBaseSize(u);
+  const inner = u.of && num(u.of.size) > 0
+    ? u.size + ' ' + (u.of.name || base)
+    : total + ' ' + base;
+  return u.name + ' = ' + inner + (u.of && num(u.of.size) > 0 ? ' = ' + total + ' ' + base : '');
+}
+/* The two pack levels this product sells in, in base units. Chips 280pks:
+   level 0 (sheet) = 14, level 1 (box) = 280. A product with a single pack
+   definition (e.g. only "box = 24") returns that one as the sheet level. */
+function packLevels(p) {
+  const packs = packUnits(p).filter((u) => !u.isBase);
+  if (!packs.length) return null;
+  const sorted = packs.slice().sort((a, b) => packBaseSize(a) - packBaseSize(b));
+  const sheet = sorted[0];
+  const box = sorted.length > 1 ? sorted[sorted.length - 1] : null;
+  /* a box must really contain at least one sheet-sized pack */
+  return { sheet, box: box && packBaseSize(box) >= packBaseSize(sheet) && packBaseSize(box) !== packBaseSize(sheet) ? box : null,
+    packs: sorted, single: sorted.length === 1 ? sorted[0] : null };
+}
+/* A readable "how this product is packed" line for screens. */
+function packingSummary(p) {
+  const L = packLevels(p);
+  if (!L) return '';
+  const base = String((p && p.unit) || 'pcs');
+  return L.packs.map((u) => {
+    /* a chained pack is described the way the owner said it:
+       "box = 20 sheet = 280 packet", not "box = 280 packet" */
+    if (u.of && num(u.of.size) > 0) {
+      const inner = u.of.name || base;
+      const innerSize = num(u.of.size);
+      return u.name + ' = ' + num(u.size) + ' ' + inner +
+        (innerSize > 0 ? ' = ' + packBaseSize(u) + ' ' + base : '');
+    }
+    return u.name + ' = ' + packBaseSize(u) + ' ' + base;
+  }).join(' · ');
+}
+/* Convert a quantity between any two pack units of the same product, without
+   ever rounding the goods themselves. 5 sheets -> 0.25 box, 400 pkt -> 1 box. */
+function convertQty(qty, fromSize, toSize) {
+  const f = num(fromSize), t = num(toSize);
+  if (!(f > 0) || !(t > 0)) return num(qty);
+  return r2(num(qty) * f / t);
+}
+/* Look a pack up by its id, its name, or 'base'. Being tolerant here matters:
+   a bill saved before a product was re-packed must still resolve its unit
+   instead of silently dropping the pack and changing the quantity. */
 function findPackUnit(p, key) {
-  return packUnits(p).filter((u) => u.key === String(key))[0] || null;
+  const units = packUnits(p);
+  const k = String(key == null ? '' : key).trim().toLowerCase();
+  if (!k) return null;
+  return units.filter((u) => String(u.key).toLowerCase() === k
+      || String(u.id || '').toLowerCase() === k
+      || String(u.name || '').toLowerCase() === k
+      || (u.isBase && (k === 'base' || k === String((p && p.unit) || 'pcs').toLowerCase())))[0] || null;
 }
 /* Price for ONE pack. An explicit pack price wins (a sheet can be cheaper
    than 14 loose packets); otherwise it is derived from the per-unit rate. */
 function packUnitPrice(u, baseRate) {
-  if (!u || u.isBase) return num(baseRate);
-  return num(u.rate) > 0 ? num(u.rate) : r2(num(baseRate) * num(u.size));
+  if (!u || u.isBase) return r2(num(baseRate));
+  return num(u.rate) > 0 ? num(u.rate) : r2(num(baseRate) * packBaseSize(u));
 }
 function packUnitCost(u, baseCost) {
-  if (!u || u.isBase) return num(baseCost);
-  return num(u.cost) > 0 ? num(u.cost) : r2(num(baseCost) * num(u.size));
+  if (!u || u.isBase) return r2(num(baseCost));
+  return num(u.cost) > 0 ? num(u.cost) : r2(num(baseCost) * packBaseSize(u));
 }
 function linePack(it) {
   if (!it || it.unitMode !== 'pack' || num(it.packSize) <= 0) return null;
-  const size = num(it.packSize), packs = num(it.packQty), price = num(it.packRate);
-  return { name:String(it.packName || 'pack'), size, packs, price,
-    baseQty:r2(packs * size), baseRate:price / size, total:r2(packs * price) };
+  const packs = num(it.packQty), price = num(it.packRate);
+  /* packSize is the good count in the pack's OWN words (20 sheets); packBase
+     is that count in base units (400 packets). Old lines have no packBase. */
+  const size = num(it.packSize);
+  const baseSize = num(it.packBase) > 0 ? num(it.packBase) : size;
+  return { name:String(it.packName || 'pack'), size, baseSize, packs, price,
+    baseQty:r2(packs * baseSize), baseRate:price / baseSize, total:r2(packs * price),
+    packOf: it.packOf || null };
 }
 /* Convert a line into pack-entry mode. Keeps the same total quantity where
    possible and never rounds the derived base rate. */
 function applyPackToLine(it, u, packs, price, costPerPack) {
-  const size = Math.max(1, num(u && u.size));
+  const unit = u || {};
+  const size = Math.max(1, num(unit.size));
+  const baseSize = Math.max(1, packBaseSize(unit));
   const n = Math.max(0, num(packs));
   it.unitMode = 'pack';
-  it.unitKey = String((u && u.key) || '__custom');
-  it.packName = String((u && u.name) || 'pack');
-  it.packSize = size;
+  it.unitKey = String(unit.key || '__custom');
+  it.packName = String(unit.name || 'pack');
+  it.packSize = size;                        /* goods in the pack's own words */
+  it.packBase = baseSize;                    /* goods in BASE units (stock / GST) */
+  it.packOf = unit.of && num(unit.of.size) > 0
+    ? { name:String(unit.of.name || ''), size:num(unit.of.size) } : null;
   it.packQty = n;
   it.packRate = num(price);
   it.packCost = num(costPerPack);
-  it.qty = r2(n * size);
-  it.rate = num(price) / size;              /* FULL precision — exactness */
-  if (costPerPack != null) it.cost = num(costPerPack) / size;
+  it.qty = r2(n * baseSize);                 /* stock always moves in base units */
+  it.rate = num(price) / baseSize;           /* FULL precision — exactness */
+  if (costPerPack != null) it.cost = num(costPerPack) / baseSize;
   return it;
 }
 function recomputePackLine(it) {
   const pk = linePack(it); if (!pk) return it;
   it.qty = pk.baseQty;
   it.rate = pk.baseRate;
-  it.cost = num(it.packCost) / pk.size;
+  it.cost = num(it.packCost) / pk.baseSize;
   return it;
 }
 function clearPackFromLine(it) {
   if (!it) return it;
   delete it.unitKey; delete it.unitMode; delete it.packName; delete it.packSize;
   delete it.packQty; delete it.packRate; delete it.packCost;
+  delete it.packBase; delete it.packOf; delete it.packPriceEdited;
   return it;
 }
 /* Switch the unit of a draft / purchase line. `baseRate` and `baseCost` are
    the CURRENT per-unit figures, so party rates and landed costs survive. */
 function setLineUnit(it, key, product) {
   const u = findPackUnit(product, key);
-  if (!u || u.isBase) {
+  if (!u) return it;
+  if (u.isBase) {
     const pk = linePack(it);
+    const baseQty = pk ? r2(num(it.packQty) * pk.baseSize) : num(it.qty);
     clearPackFromLine(it);
+    it.qty = baseQty;                      /* keep the goods, drop the pack */
     return it;
   }
+  /* keep the same amount of goods when switching pack levels */
   const baseRate = num(it.rate), baseCost = num(it.cost);
-  const packs = num(it.qty) > 0 && u.size > 0 ? r2(num(it.qty) / u.size) || 1 : 1;
-  const price = packUnitPrice(u, baseRate);
+  const pk = linePack(it);
+  const baseQty = pk ? r2(num(pk.packs) * pk.baseSize) : num(it.qty);
+  const packs = num(baseQty) > 0 && u.baseSize > 0 ? (r2(num(baseQty) / u.baseSize) || 1) : 1;
+  const price = pk ? r2(num(pk.price) / pk.baseSize * u.baseSize) : packUnitPrice(u, baseRate);
   const cost = packUnitCost(u, baseCost);
   return applyPackToLine(it, u, packs, price, cost);
+}
+/* human words for what one pack holds: "20 sheets" or "280 packets" */
+function packContentsText(pk, baseUnit) {
+  const unit = String(baseUnit || 'pcs');
+  if (!pk) return '';
+  if (pk.baseSize !== pk.size && pk.packOf) return pk.size + ' ' + (pk.packOf.name || unit);
+  return pk.baseSize + ' ' + unit;
 }
 function packLineText(it) {
   const pk = linePack(it);
   if (!pk) return '';
   const unit = String(it.unit || 'pcs');
-  return pk.packs + ' ' + pk.name + ' × ' + pk.size + ' ' + unit + ' = ' + pk.baseQty + ' ' + unit +
-    ' · ' + money(pk.price) + ' / ' + pk.name + ' → ' + money(pk.baseRate, false) + ' / ' + unit +
-    ' · line ' + money(pk.total);
+  return pk.packs + ' ' + pk.name + (pk.packs === 1 ? '' : 's') + ' × ' + packContentsText(pk, unit) +
+    ' = ' + pk.baseQty + ' ' + unit + ' · ' + money(pk.price) + ' / ' + pk.name + ' → ' +
+    money(pk.baseRate, false) + ' / ' + unit + ' · line ' + money(pk.total);
 }
 function packLineShort(it) {
   const pk = linePack(it);
   if (!pk) return '';
-  return pk.packs + ' ' + pk.name + ' × ' + pk.size + ' ' + String(it.unit || 'pcs') +
+  return pk.packs + ' ' + pk.name + ' × ' + packContentsText(pk, String(it.unit || 'pcs')) +
     ' · ' + money(pk.price, false) + '/' + pk.name;
+}
+/* Short "what is in stock" words for a card: 2 box + 0.5 sheet */
+function packSplitText(product, qtyInBase) {
+  const q = num(qtyInBase);
+  const L = packLevels(product);
+  const base = String((product && product.unit) || 'pcs');
+  if (!L || q <= 0) return num(q) + ' ' + base;
+  const boxSize = L.box ? packBaseSize(L.box) : 0;
+  const out = [];
+  let left = q;
+  if (boxSize > 0 && left >= boxSize) {
+    const boxes = Math.floor(left / boxSize);
+    out.push(boxes + ' ' + L.box.name + (boxes === 1 ? '' : 's'));
+    left = r2(left - boxes * boxSize);
+  }
+  const sheetSize = packBaseSize(L.sheet);
+  if (sheetSize > 0 && left >= sheetSize) {
+    const sheets = Math.floor(left / sheetSize);
+    out.push(sheets + ' ' + L.sheet.name + (sheets === 1 ? '' : 's'));
+    left = r2(left - sheets * sheetSize);
+  }
+  if (left > 0 || !out.length) out.push(r2(left) + ' ' + base);
+  return out.join(' + ');
 }
 /* The A4 item-name column is narrow; keep this under ~30 ASCII chars. */
 /* A party / price-list / default rate changes the BASE rate; keep the quoted
    pack price in step so the row never shows a stale sheet price. */
 function syncPackPriceFromBase(it) {
   const pk = linePack(it); if (!pk) return it;
-  it.packRate = r2(num(it.rate) * pk.size);
-  it.packCost = r2(num(it.cost) * pk.size);
+  /* A price typed for the sheet/box on THIS bill is a deliberate business
+     decision (a discount, a round figure). Re-applying a party rate or a price
+     list must not silently overwrite it — only the cost side follows. */
+  if (!it.packPriceEdited) it.packRate = r2(num(it.rate) * pk.baseSize);
+  it.packCost = r2(num(it.cost) * pk.baseSize);
   return recomputePackLine(it);
 }
 function packLinePdf(it) {
   const pk = linePack(it); if (!pk) return '';
   const unit = String(it.unit || 'pcs');
-  return pk.packs + ' ' + pk.name + ' x' + pk.size + ' = ' + pk.baseQty + ' ' + unit;
+  return pk.packs + ' ' + pk.name + ' x' + packContentsText(pk, unit) + ' = ' + pk.baseQty + ' ' + unit;
 }
 /* Persist the pack metadata on saved bills / purchases. Without it a reload
    would recompute totals from a ROUNDED per-packet rate and gain a few paise. */
 function packLineFields(it) {
   if (!linePack(it)) return {};
   return { unitKey:it.unitKey || '__custom', unitMode:'pack', packName:it.packName,
-    packSize:it.packSize, packQty:it.packQty, packRate:it.packRate, packCost:it.packCost };
+    packSize:it.packSize, packBase:it.packBase, packOf:it.packOf || null,
+    packQty:it.packQty, packRate:it.packRate, packCost:it.packCost,
+    packPriceEdited: !!it.packPriceEdited };
 }
 
 /* =====================================================================
@@ -1592,7 +1808,22 @@ function repairData() {
       if (!Array.isArray(p.stock.moves)) p.stock.moves = [];
       if (!isFinite(num(p.stock.qty))) { p.stock.qty = 0; report.stock++; }
       p.rate = r2(num(p.rate)); p.cost = r2(num(p.cost)); p.gst = num(p.gst);
+      /* pack definitions: a chained pack (box = N sheets) must carry baseSize */
+      if (Array.isArray(p.packs)) {
+        p.packs.forEach((u) => {
+          if (!u || !(num(u.size) > 0)) return;
+          if (u.of && num(u.of.size) > 0 && !(num(u.baseSize) > 0)) { u.baseSize = r2(num(u.size) * num(u.of.size)); report.stock++; }
+          if (!(num(u.baseSize) > 0)) u.baseSize = num(u.size);
+        });
+      }
     });
+
+    /* pack lines saved by older versions know only packSize — give them packBase
+       so a chained pack ("box = 20 sheet") can never be re-read as 20 packets */
+    const fixPackLine = (it) => {
+      if (!it || it.unitMode !== 'pack' || !(num(it.packSize) > 0)) return;
+      if (!(num(it.packBase) > 0)) it.packBase = num(it.packSize);
+    };
 
     /* bills: rebuild totals, re-link party + products, normalise the ledger */
     db.invoices.forEach((iv) => {
@@ -1600,6 +1831,7 @@ function repairData() {
       report.bills++;
       if (!Array.isArray(iv.items)) iv.items = [];
       iv.items.forEach((it) => {
+        fixPackLine(it);
         it.qty = r2(num(it.qty)); it.rate = r2(num(it.rate)); it.gst = num(it.gst); it.cost = r2(num(it.cost));
         /* an item whose product was deleted keeps selling, but must not break reports */
         if (it.productId && !productById(it.productId)) { it.productId = null; report.items++; }
@@ -1625,7 +1857,11 @@ function repairData() {
       if (!pu || typeof pu !== 'object') return;
       report.purchases++;
       if (!Array.isArray(pu.items)) pu.items = [];
-      pu.items.forEach((it) => { it.qty = r2(num(it.qty)); it.rate = r2(num(it.rate)); it.gst = num(it.gst); });
+      pu.items.forEach((it) => {
+        fixPackLine(it);
+        it.qty = r2(num(it.qty)); it.rate = r2(num(it.rate)); it.gst = num(it.gst);
+        if (it.unitCost == null) it.unitCost = r2(num(it.rate));
+      });
       if (!pu.supplier || typeof pu.supplier !== 'object') {
         const sp = pu.supplierId ? byId(db.suppliers, pu.supplierId) : null;
         pu.supplier = sp ? Object.assign({}, sp) : { id: pu.supplierId || null, name: 'Cash purchase', phone: '' };
@@ -2058,38 +2294,59 @@ const productsState = { q:'', tab:'products' };
    Blank price = base rate × size (calculated live, so no stale numbers). */
 function productPacksHtml(p) {
   const packs = Array.isArray(p && p.packs) ? p.packs : [];
+  const base = String((p && p.unit) || 'pcs');
   const rows = [];
   for (let i = 0; i < 4; i++) {
     const u = packs[i] || {};
+    const prev = packs[i - 1];
     rows.push('<div class="pack-def" data-pkrow="' + i + '">' +
       '<div class="field"><label>' + (i === 0 ? 'Pack name' : '') + '</label>' +
         '<input class="control" data-pk="' + i + '" data-pkf="name" value="' + esc(u.name || '') +
         '" placeholder="sheet / box"></div>' +
-      '<div class="field"><label>' + (i === 0 ? esc(String((p && p.unit) || 'pcs')) + ' per pack' : '') + '</label>' +
+      '<div class="field"><label>' + (i === 0 ? esc(base) + ' per pack' : 'how many per pack') + '</label>' +
         '<input class="control num" data-pk="' + i + '" data-pkf="size" inputmode="decimal" value="' +
-        esc(u.size || '') + '" placeholder="14 / 12 / 10"></div>' +
-      '<div class="field"><label>' + (i === 0 ? 'Price / pack ₹' : '') + '</label>' +
-        '<input class="control num" data-pk="' + i + '" data-pkf="rate" inputmode="decimal" value="' +
-        esc(u.rate || '') + '" placeholder="auto"></div>' +
+        esc(u.size || '') + '" placeholder="' + (prev ? 'e.g. ' + esc(prev.name || 'sheet') + 's per ' + esc(u.name || 'box') : '14 / 20') + '"></div>' +
+      '<div class="field"><label>' + (prev ? 'counted in' : (i === 0 ? 'Price / pack ₹' : '')) + '</label>' +
+        (prev
+          ? '<select class="control" data-pk="' + i + '" data-pkf="of"><option value="">' + esc(base) + 's</option>' +
+              packs.slice(0, i).map((q) => '<option value="' + esc(q.name) + '"' + (u.of && u.of.name === q.name ? ' selected' : '') + '>' + esc(q.name) + 's</option>').join('') +
+            '</select>'
+          : '<input class="control num" data-pk="' + i + '" data-pkf="rate" inputmode="decimal" value="' +
+              esc(u.rate || '') + '" placeholder="auto"></div>') +
+      '<div class="field"><label>' + (prev ? 'Price / pack ₹' : '') + '</label>' +
+        (prev
+          ? '<input class="control num" data-pk="' + i + '" data-pkf="rate" inputmode="decimal" value="' + esc(u.rate || '') + '" placeholder="auto">'
+          : '') + '</div>' +
     '</div>');
   }
   return '<div class="section-label">Packing — sheets / boxes</div>' +
     '<div class="notice gold">' + svgIcon('box') + '<div><b>Buy and sell in packs.</b> ' +
-      'Example: <b>Chips 280pks</b> base unit <b>packet</b>; <b>sheet = 14 packets @ ₹1,139</b>, ' +
-      '<b>box = 12 packets @ ₹980</b>. Leave "Price / pack" blank to use the per-packet rate × pack size. ' +
-      '<b>The packets-per-pack number can be changed on each purchase line</b> if a batch has 12 or 10 instead of 14.' +
+      'For <b>Chips 280pks</b> the base unit is <b>packet</b>: row 1 <b>sheet = 14 packets</b>, ' +
+      'row 2 <b>box = 20</b> <i>counted in</i> <b>sheet</b> — that is <b>1 box = 20 sheets = 280 packets</b>, ' +
+      'exactly the number on the carton. ' +
+      'Leave "Price / pack" blank to use the per-packet rate × pack size. ' +
+      'The per-pack count can still be changed on each bill or purchase line (a 12-packet batch).' +
       '</div></div>' +
     rows.join('') +
-    '<div class="hint" id="packHint">Stock is always counted in the base unit, so buying 5 sheets of 14 ' +
-      'adds 70 packets and selling 1 sheet removes 14.</div>';
+    '<div class="hint" id="packHint">Stock is always counted in the base unit: buying 1 box of the example' +
+      ' adds 280 packets, selling 1 sheet removes 14.</div>';
 }
 function readProductPacks(m) {
   const out = [];
-  $$('.pack-def', m).forEach((row) => {
+  const rows = $$('.pack-def', m);
+  const seen = [];
+  rows.forEach((row) => {
     const get = (f) => { const el = $('[data-pk="' + row.dataset.pkrow + '"][data-pkf="' + f + '"]', m); return el ? String(el.value).trim() : ''; };
-    const name = get('name'), size = num(get('size')), rateRaw = get('rate');
+    const name = get('name'), size = num(get('size')), rateRaw = get('rate'), ofName = get('of');
     if (!name || size <= 0) return;
-    out.push({ id: uid('pk'), name, size, rate: rateRaw === '' ? 0 : num(rateRaw), cost: 0 });
+    /* the "counted in" pack must be one defined ABOVE this row, else it is packets */
+    const ofPack = ofName ? seen.find((q) => q.name.toLowerCase() === ofName.toLowerCase()) : null;
+    const rec = { id: uid('pk'), name, size,
+      of: ofPack ? { name: ofPack.name, size: ofPack.size } : null,
+      baseSize: ofPack ? r2(size * ofPack.size) : size,
+      rate: rateRaw === '' ? 0 : num(rateRaw), cost: 0 };
+    seen.push(rec);
+    out.push(rec);
   });
   return out;
 }
@@ -2110,7 +2367,9 @@ function productFormHtml(p) {
       '<div class="field"><label>Item Code / HSN</label><input class="control" data-k="code" value="' + esc(p.code || '') + '"></div>' +
       '<div class="field"><label>Min Qty (optional)</label><input class="control num" data-k="minQty" inputmode="decimal" value="' + esc(p.minQty || '') + '"></div>' +
     '</div>' +
-    productPacksHtml(p);
+    productPacksHtml(p) +
+    '<button type="button" class="btn btn-outline btn-block" data-act="bulkPack" style="margin-top:4px">' +
+      svgIcon('layers') + ' Use a box / sheet preset (1 box = 20 sheets of 14…)</button>';
 }
 function openProductModal(product, onSaved) {
   const editing = !!product;
@@ -2140,6 +2399,14 @@ function openProductModal(product, onSaved) {
     const act = e.target.closest('[data-act]'); if (!act) return;
     const a = act.dataset.act;
     if (a === 'cancel') return closeModal();
+    if (a === 'bulkPack') {
+      closeModal();
+      openBulkPackSheet(function () {
+        const fresh = byId(db.products, p.id) || p;
+        openProductModal(editing ? fresh : null);
+      });
+      return;
+    }
     if (a === 'del') {
       const used = productPartyCount(p.id) + db.invoices.filter((iv) => iv.items.some((it) => it.productId === p.id)).length;
       if (await confirmBox('Delete product?', '"' + p.name + '" will be removed.' + (used ? '\nUsed in ' + used + ' place(s); saved bills keep their old details.' : ''), 'Delete', true)) {
@@ -2159,6 +2426,7 @@ function openProductModal(product, onSaved) {
       const data = {
         name, rate: r2(rate), gst: r2(num(get('gst'))),
         cost: costRaw === '' ? r2(rate * (1 - clamp(num(db.settings.defaultMarginPct), 0, 90) / 100)) : r2(num(costRaw)),
+        costManual: costRaw === '' ? r2(rate * (1 - clamp(num(db.settings.defaultMarginPct), 0, 90) / 100)) : r2(num(costRaw)),
         unit: get('unit') || 'pcs', code: get('code'), minQty: get('minQty'),
         packs: readProductPacks(m)
       };
@@ -2207,6 +2475,7 @@ function renderProducts(el) {
       : '') +
     '<div class="btn-row" style="margin-bottom:14px">' +
       '<button class="btn btn-teal" data-act="add">' + svgIcon('plus') + ' Add Product</button>' +
+      '<button class="btn btn-outline" data-act="bulkPack">' + svgIcon('layers') + ' Box &amp; sheet setup</button>' +
       '<button class="btn btn-outline" data-act="goLists">' + svgIcon('tags') + ' Price Lists</button>' +
       '<button class="btn btn-outline" data-go="#/stock">' + svgIcon('warehouse') + ' Stock</button></div>' +
     (list.length
@@ -2222,7 +2491,8 @@ function renderProducts(el) {
             '<div class="avatar ' + avatarVar(p.name) + '">' + esc(initials(p.name)) + '</div>' +
             '<div class="row-main">' +
               '<div class="row-top"><div style="min-width:0"><div class="row-title">' + esc(p.name) + '</div>' +
-              '<div class="row-sub">' + (p.code ? esc(p.code) + ' · ' : '') + 'per ' + esc(p.unit || 'pcs') + ' · GST ' + num(p.gst) + '%</div></div>' +
+              '<div class="row-sub">' + (p.code ? esc(p.code) + ' · ' : '') + 'per ' + esc(p.unit || 'pcs') + ' · GST ' + num(p.gst) + '%' +
+                (packLevels(p) ? ' · <b>' + esc(packingSummary(p)) + '</b>' : '') + '</div></div>' +
               '<div style="text-align:right"><div class="row-amt">' + money(p.rate) + '</div>' +
               '<div style="font-size:11px;color:var(--muted);font-weight:700;margin-top:2px">cost ' + money(cost) + '</div></div></div>' +
               '<div class="row-meta">' +
@@ -2233,8 +2503,11 @@ function renderProducts(el) {
                 (plCount ? '<span class="mini-tag violet">' + svgIcon('tags') + ' ' + plCount + ' list price' + (plCount > 1 ? 's' : '') + '</span>' : '') +
               '</div>' +
               '<div class="row-actions">' +
+                '<button class="btn btn-sm ' + (p.favourite ? 'btn-gold' : 'btn-ghost') + '" data-act="star" data-id="' + p.id + '" title="Show on the bill builder">' +
+                  svgIcon('star') + (p.favourite ? ' Favourite' : ' Star') + '</button>' +
                 '<button class="btn btn-sm btn-outline" data-act="edit" data-id="' + p.id + '">' + svgIcon('edit') + ' Edit</button>' +
                 '<button class="btn btn-sm btn-ghost" data-act="buy" data-id="' + p.id + '">' + svgIcon('cart') + ' Buy</button>' +
+                (packLevels(p) && stockQty(p) > 0 ? '<button class="btn btn-sm btn-ghost" data-act="convert" data-id="' + p.id + '">' + svgIcon('refresh') + ' Convert stock</button>' : '') +
                 '<button class="btn btn-sm btn-ghost" data-act="prices" data-id="' + p.id + '">' + svgIcon('tags') + ' Prices</button>' +
                 '<button class="btn btn-sm btn-danger" data-act="del" data-id="' + p.id + '" aria-label="Delete">' + svgIcon('trash') + '</button>' +
               '</div>' +
@@ -2255,11 +2528,22 @@ function renderProducts(el) {
     }
     const a = act.dataset.act, id = act.dataset.id;
     if (a === 'add') return openProductModal(null);
+    if (a === 'bulkPack') return openBulkPackSheet(() => { buildNav(); handleRoute(); });
     if (a === 'goLists') { productsState.tab = 'lists'; return renderProducts(el); }
     if (a === 'edit') return openProductModal(productById(id));
     if (a === 'clearSearch') { productsState.q = ''; return renderProducts(el); }
     if (a === 'prices') return openAllPricesSheet(productById(id));
     if (a === 'buy') { newPuDraft(id); persistPuDraft(); location.hash = '#/purchase/new'; return; }
+    if (a === 'star') {
+      const on = toggleFavourite(id);
+      toast(on ? 'Pinned to the bill builder' : 'Removed from favourites', 'ok');
+      return renderProducts(el);
+    }
+    if (a === 'convert') {
+      const p = productById(id);
+      if (p) openStockConvertSheet(p, () => { buildNav(); renderProducts(el); });
+      return;
+    }
     if (a === 'del') {
       const p = productById(id); if (!p) return;
       if (await confirmBox('Delete product?', '"' + p.name + '" will be removed. Saved invoices keep their old details.', 'Delete', true)) {
@@ -2734,6 +3018,7 @@ function renderCustomerDetail(el, params) {
             '<span class="mini-tag">Paid ' + money(num(iv.amountReceived), false) + '</span>' +
             (dueOf(iv) > 0 ? '<span class="mini-tag red">Due ' + money(dueOf(iv), false) + '</span>' : '') + '</div>' +
           '<div class="row-actions"><button class="btn btn-sm btn-outline" data-act="openInv" data-id="' + iv.id + '">Open invoice</button>' +
+            '<button class="btn btn-sm btn-ghost" data-act="repeatInv" data-id="' + iv.id + '">' + svgIcon('refresh') + ' Repeat</button>' +
             (iv.status !== 'received' ? '<button class="btn btn-sm btn-teal" data-act="collect" data-id="' + iv.id + '">' + svgIcon('rupee') + ' Record payment</button>' : '') + '</div>' +
           '</div></div>';
       }).join('') + '</div>'
@@ -2797,6 +3082,15 @@ function renderCustomerDetail(el, params) {
     const a = act.dataset.act;
     if (a === 'edit') return openCustomerModal(c);
     if (a === 'openInv') { location.hash = '#/invoice/' + act.dataset.id; return; }
+    if (a === 'repeatInv') {
+      const src = byId(db.invoices, act.dataset.id);
+      if (!src) return;
+      if (await confirmBox('Repeat ' + src.invoiceNo + '?', 'A NEW bill is started with the same items, prices and party.\n' +
+        'Quantities start at 0; the old bill never changes.', 'Repeat')) {
+        repeatBillDraft(src); location.hash = '#/bill/new'; handleRoute();
+      }
+      return;
+    }
     if (a === 'collect') { const iv = byId(db.invoices, act.dataset.id); if (iv) return openCollectModal(iv); }
     if (a === 'wa') return openWhatsAppSheet([c]);
     if (a === 'newBill') {
@@ -2906,7 +3200,7 @@ function blankItem(productId, opts) {
   const p = productId ? productById(productId) : null;
   const o = opts || {};
   const res = p ? priceFor(p, { customer: o.customer || null, priceListId: o.priceListId || null }) : null;
-  return {
+  const item = {
     id: uid('it'), productId: p ? p.id : null, name: p ? p.name : '', unit: p ? (p.unit || 'pcs') : 'pcs',
     hsn: p ? (p.code || '') : '', qty: 1,
     rate: res ? res.rate : 0, gst: res ? res.gst : num(db.settings.defaultGst),
@@ -2914,6 +3208,18 @@ function blankItem(productId, opts) {
     source: res ? res.source : 'manual', sourceLabel: res ? res.sourceLabel : '',
     priceListId: res ? res.priceListId : null, partyRateId: res ? res.partyRateId : null
   };
+  /* A product packed in sheets/boxes opens on its SHEET (the usual sale) with
+     one sheet in the quantity, so the price shown is a real sheet price. */
+  if (p) {
+    const L = packLevels(p);
+    if (L && o.startUnit !== 'base') {
+      const u = L.sheet;
+      applyPackToLine(item, u, 1, packUnitPrice(u, res ? res.rate : 0), packUnitCost(u, res ? res.cost : 0));
+      item.unitKey = u.key;
+      item.packQtyKind = '';
+    }
+  }
+  return item;
 }
 function newDraft() {
   draft = {
@@ -2967,21 +3273,53 @@ function packBarHtml(it, prefix, product) {
   const units = packUnits(p);
   const key = it.unitKey || 'base';
   let opts = units.map((u) => '<option value="' + esc(u.key) + '"' + (u.key === key ? ' selected' : '') + '>' +
-    esc(u.isBase ? base + ' (single)' : u.name + ' = ' + u.size + ' ' + base) + '</option>').join('');
+    esc(packUnitLabel(u, base)) + '</option>').join('');
   opts += '<option value="__custom"' + (key === '__custom' ? ' selected' : '') + '>Other pack…</option>';
+  /* One tap from packets to a sheet to a box — the quantity of goods does not
+     change, the app just switches how the counter talks about it. */
+  const quick = units.length > 1
+    ? '<div class="pack-quick">' + units.map((u) => '<button type="button" class="chip' + (u.key === key ? ' active' : '') +
+        '" data-packunit="' + esc(u.key) + '">' + (u.isBase ? esc(base) + ' (single)' : esc(u.name) + ' = ' + esc(packUnitLabel(u, base).split(' = ').slice(-1)[0])) +
+        '</button>').join('') + '</div>'
+    : '';
+  const priceState = pk
+    ? (it.packRateEnabled || it.packPriceEdited
+        ? '<span class="pack-price-flag typed">' + svgIcon('edit') + ' price typed for this bill</span>'
+        : '<span class="pack-price-flag">' + svgIcon('percent') + ' auto = rate × ' + pk.size + '</span>')
+    : '';
+  const autoState = it.packQtyKind === 'autoBox'
+    ? '<span class="pack-price-flag">' + svgIcon('refresh') + ' counted as boxes</span>' : '';
   const note = pk ? '<div class="pack-note">' + svgIcon('box') + '<span data-packnote>' +
-    esc(packLineText(it)) + '</span></div>' : '';
+    esc(packLineText(it)) + '</span>' + priceState + autoState + '</div>' : '';
+  const sizeLabel = pk && pk.packOf
+    ? esc(pk.packOf.name || base) + ' / ' + esc(pk.name)
+    : esc(base) + ' / ' + (pk ? esc(pk.name) : 'pack');
   const extra = pk ? '<div class="pack-fields">' +
       '<div class="field"><label>Pack name</label><input class="control" data-' + prefix + '="packName" value="' +
         esc(pk.name) + '" placeholder="sheet / box"></div>' +
-      '<div class="field"><label>' + esc(base) + ' / pack</label><input class="control num" data-' + prefix +
+      '<div class="field"><label>' + sizeLabel + '</label><input class="control num" data-' + prefix +
         '="packSize" inputmode="decimal" value="' + esc(pk.size) + '"></div>' +
     '</div>' : '';
   const tip = (!units.some((u) => !u.isBase) && !pk)
     ? '<div class="hint">Add sheet / box sizes in <b>Products → Edit → Packing</b>, or choose <b>Other pack…</b> here.</div>' : '';
-  return '<div class="pack-bar"><div class="field"><label>Sell as / Buy as</label>' +
+  return '<div class="pack-bar"' + (pk ? ' data-packline' : '') + '><div class="field"><label>Sell as / Buy as</label>' +
     '<select class="control" data-' + prefix + '="unitKey">' + opts + '</select></div>' +
-    extra + note + tip + '</div>';
+    quick + extra + note + tip + '</div>';
+}
+/* The row of one-tap unit buttons shown directly above the numbers, so a sheet
+   sale is: tap product → tap SHEET → type 5. */
+function packButtonRowHtml(it, prefix) {
+  const p = it.productId ? productById(it.productId) : null;
+  const units = packUnits(p);
+  if (!p || units.length < 2) return '';
+  const key = it.unitKey || 'base';
+  const base = String(p.unit || 'pcs');
+  return '<div class="pack-btns">' + units.map((u) => {
+    const label = u.isBase ? '1 ' + base : ('1 ' + u.name + ' = ' + packBaseSize(u) + ' ' + base);
+    const short = u.isBase ? base : u.name;
+    return '<button type="button" class="pbtn' + (u.key === key ? ' active' : '') + '" data-packunit="' + esc(u.key) +
+      '" title="' + esc(label) + '"><b>' + esc(short) + '</b><small>' + esc(u.isBase ? 'single' : packBaseSize(u) + ' ' + base) + '</small></button>';
+  }).join('') + '</div>';
 }
 function packQtyValue(it) { const pk = linePack(it); return pk ? pk.packs : it.qty; }
 function packRateValue(it) { const pk = linePack(it); return pk ? pk.price : it.rate; }
@@ -2989,11 +3327,77 @@ function packQtyLabel(it, base) { const pk = linePack(it); return pk ? 'No. of '
 function packRateLabel(it) { const pk = linePack(it); return pk ? 'Price / ' + pk.name + ' ₹' : 'Rate ₹'; }
 function handlePackInput(it, field, value) {
   const pk = linePack(it); if (!pk) return false;
-  if (field === 'qty') { it.packQty = Math.max(0, num(value)); recomputePackLine(it); return true; }
-  if (field === 'rate') { it.packRate = Math.max(0, num(value)); recomputePackLine(it); return true; }
-  if (field === 'packSize') { it.packSize = Math.max(1, num(value) || 1); recomputePackLine(it); return true; }
+  if (field === 'qty') {
+    it.packQty = Math.max(0, num(value));
+    it.packQtyKind = '';              /* the owner is typing again: not an auto conversion */
+    /* Typing more sheets than a full box means the counter is really counting
+       boxes. Convert the QUANTITY only — the sheet price the owner typed stays
+       exactly as it is, and a part box is kept (25 sheets = 1.25 boxes, never
+       rounded down). */
+    const L = packLevels(it.productId ? productById(it.productId) : null);
+    const sheetsInBox = L && L.box && L.sheet ? packBaseSize(L.box) / packBaseSize(L.sheet) : 0;
+    if (sheetsInBox > 1 && it.unitKey === L.sheet.key && num(value) > sheetsInBox) {
+      it.unitKey = L.box.key;
+      it.packName = L.box.name;
+      it.packSize = num(L.box.size);
+      it.packBase = packBaseSize(L.box);
+      it.packOf = L.box.of ? { name:L.box.of.name, size:num(L.box.of.size) } : null;
+      it.packQty = r2(num(value) / sheetsInBox);
+      it.packRate = r2(num(it.packRate || 0) * sheetsInBox);
+      it.packQtyKind = 'autoBox';
+    }
+    recomputePackLine(it); return true;
+  }
+  if (field === 'rate') {
+    const typed = String(value).trim() !== '';
+    /* An empty box falls back to rate × size; anything typed here is the sheet
+       price for THIS bill and is remembered as such. */
+    it.packRateEnabled = typed;
+    if (typed) { it.packRate = Math.max(0, num(value)); it.packPriceEdited = true; }
+    else { it.packPriceEdited = false; const pk = linePack(it); it.packRate = r2(num(it.rate) * (pk ? pk.baseSize : 1)); }
+    recomputePackLine(it); return true;
+  }
+  if (field === 'packSize') {
+    /* Changing "packets per sheet" keeps the sheet price and re-derives packets. */
+    it.packSize = Math.max(1, num(value) || 1);
+    it.packBase = it.packSize;
+    it.packOf = null;
+    recomputePackLine(it); return true;
+  }
   if (field === 'packName') { it.packName = String(value).trim() || 'pack'; return true; }
   return false;
+}
+/* One place that switches a bill/purchase line between packet / sheet / box:
+   quantities convert exactly and prices follow the pack's own price. */
+function switchLineUnit(it, key) {
+  const p = it.productId ? productById(it.productId) : null;
+  if (!p) return it;
+  const before = linePack(it);
+  const wasQty = before ? before.packs : num(it.qty);
+  /* a sheet price typed for this bill survives a change of unit */
+  const typedPrice = it.packPriceEdited && before;
+  const u = findPackUnit(p, key);
+  if (!u) return it;                       /* unknown key: never change the line */
+  if (u.isBase) {
+    /* keep the goods: sheet qty -> packets, on this product's packet rate */
+    it.qty = before ? r2(wasQty * before.baseSize) : num(it.qty);
+    it.rate = typedPrice ? num(before.price) / before.baseSize : packUnitPrice(u, num(it.rate));
+    clearPackFromLine(it);
+    it.unitKey = 'base';
+    it.packQtyKind = '';
+    if (typedPrice) it.packPriceEdited = false;   /* no pack left to carry the mark */
+    return it;
+  }
+  /* keep the same goods; the pack price follows the price already on the line */
+  const baseQty = before ? r2(wasQty * before.baseSize) : num(it.qty);
+  const packs = u.baseSize > 0 ? (r2(baseQty / u.baseSize) || 1) : 1;
+  const price = before ? r2(num(before.price) / before.baseSize * packBaseSize(u)) : packUnitPrice(u, num(it.rate));
+  const cost = packUnitCost(u, num(it.cost));
+  applyPackToLine(it, u, packs, price, cost);
+  it.unitKey = u.key;
+  it.packQtyKind = '';
+  if (typedPrice) { it.packRateEnabled = true; it.packPriceEdited = true; }
+  return it;
 }
 function handlePackChange(it, key, product) {
   if (key === '__custom') {
@@ -3042,10 +3446,20 @@ function itemRowHtml(it, i, partyName) {
       '<div class="field"><label>' + esc(packRateLabel(it)) + '</label><input class="control num" data-f="rate" inputmode="decimal" value="' + esc(packRateValue(it)) + '"></div>' +
       '<div class="field"><label>GST %</label><input class="control num" data-f="gst" inputmode="decimal" value="' + esc(it.gst) + '"></div>' +
     '</div>' +
+    packButtonRowHtml(it, 'f') +
     packBarHtml(it, 'f', pprod) +
     (opts.length > 1 ? '<div class="price-pick">' + opts.map((o) =>
       '<button type="button" class="price-opt' + (r2(o.rate) === r2(it.rate) && o.source === it.source ? ' active' : '') + '" data-act="pickPrice" data-id="' + it.id + '" data-key="' + esc(o.key) + '">' +
       esc(o.label) + ' <b>' + money(o.rate, false) + '</b></button>').join('') + '</div>' : '') +
+    (function () {
+      /* the last rates this party was ACTUALLY billed — faster than any list */
+      const recent = it.productId && draft && draft.customerId ? recentPartyPrices(draft.customerId, it.productId, 3) : [];
+      if (!recent.length) return '';
+      return '<div class="price-pick recent">' + recent.map((r, n) =>
+        '<button type="button" class="price-opt' + (r2(r.rate) === r2(it.rate) ? ' active' : '') + '" data-act="pickRecent" data-id="' + it.id +
+        '" data-rate="' + r.rate + '" data-gst="' + r.gst + '">' + svgIcon('clock') + 'Last ' + money(r.rate, false) +
+        ' <span>' + (n === 0 ? 'last bill' : fmtDate(r.date)) + '</span></button>').join('') + '</div>';
+    })() +
     '<div class="item-calc">' +
       '<span>Taxable<b>' + money(c.taxable, false) + '</b></span>' +
       '<span>GST<b>' + money(c.gst, false) + '</b></span>' +
@@ -3126,11 +3540,31 @@ function drawBill(el) {
       'Off: GST is added on top of the rate.</div></div>' +
 
   /* ---- items ---- */
+  (function () {
+    const fav = favouriteProducts().filter((p) => p && p.rate > 0);
+    const last = !draft.id ? db.invoices.slice().sort(sortInvDesc)[0] : null;
+    if (!fav.length && !last) return '';
+    return '<div class="card quick-add-card"><div class="card-head"><div class="card-title"><span class="dot gold">' + svgIcon('star') + '</span>' +
+        '<div><h3>Quick add</h3><div class="sub">Tap a favourite item to put it on this bill</div></div></div>' +
+        (last ? '<button class="btn btn-sm btn-outline" data-act="repeatLast" title="Copy the last bill\'s items and prices">' +
+          svgIcon('copy') + ' Repeat last</button>' : '') + '</div>' +
+      (fav.length ? '<div class="fav-grid">' + fav.slice(0, 12).map((p) => {
+        const L = packLevels(p);
+        const price = L ? packUnitPrice(L.sheet, num(p.rate)) : num(p.rate);
+        const unitName = L ? L.sheet.name : (p.unit || 'pcs');
+        const q = stockQty(p);
+        return '<button type="button" class="fav-item' + (p.favourite ? ' star' : '') + '" data-act="quickAdd" data-id="' + p.id + '">' +
+          '<b>' + esc(p.name) + '</b><span>' + money(price, false) + ' / ' + esc(unitName) + '</span>' +
+          '<small>' + (stockTracked(p) ? num(q) + ' ' + esc(p.unit || 'pcs') + ' left' : 'not counted yet') + '</small></button>';
+      }).join('') + '</div>' : '<div class="hint">Tap the ' + svgIcon('star') + ' on a product in <b>My Products</b> to pin it here.</div>') +
+      '</div>';
+  })() +
   '<div class="card"><div class="card-head"><div class="card-title"><span class="dot teal">' + svgIcon('box') + '</span>' +
       '<div><h3>Items</h3><div class="sub">Taxable = Qty × Rate · GST on taxable</div></div></div>' +
       '<span class="mini-tag">' + draft.items.length + ' line' + (draft.items.length === 1 ? '' : 's') + '</span></div>' +
     '<div id="itemList">' + draft.items.map((it, i) => itemRowHtml(it, i, partyName)).join('') + '</div>' +
     '<button class="btn btn-outline btn-block" data-act="addRow">' + svgIcon('plus') + ' Add Row</button>' +
+    '<div id="billChecks">' + billCheckHtml(billChecks(draft.items, draft)) + '</div>' +
     '<div class="totals">' +
       '<div class="tline"><span class="k">Sub Total (Taxable)</span><span class="v" data-t="subTotal">' + money(t.subTotal) + '</span></div>' +
       '<div class="tline"><span class="k">Total GST</span><span class="v" data-t="totalGst">' + money(t.totalGst) + '</span></div>' +
@@ -3252,6 +3686,13 @@ function wireBill(el) {
         if (ds.f === 'gst') it.gst = num(tgt.value);
         if (ds.f === 'name') { it.name = tgt.value; it.productId = null; }
       } else if (ds.f === 'rate') { it.source = 'manual'; it.sourceLabel = 'Manual'; }
+      /* emptying the pack price box = "go back to rate × size" */
+      if (linePack(it) && !String(tgt.value).trim()) {
+        it.packRateEnabled = false; it.packPriceEdited = false;
+        const pk = linePack(it);
+        it.packRate = r2(num(it.rate) * pk.baseSize);
+        recomputePackLine(it);
+      }
       refreshCalc(el); persistDraft(); return;
     }
     if (ds.d) {
@@ -3295,11 +3736,19 @@ function wireBill(el) {
       applyPricesToItems(true);
       persistDraft(); drawBill(el); return;
     }
+    const unitBtn = tgt.closest('[data-packunit]');
+    if (unitBtn) {
+      const row2 = unitBtn.closest('[data-item]');
+      const it2 = row2 ? draft.items.find((x) => x.id === row2.dataset.item) : null;
+      if (!it2) return;
+      switchLineUnit(it2, unitBtn.dataset.packunit);
+      persistDraft(); drawBill(el); return;
+    }
     const row = tgt.closest('[data-item]');
     if (!row) return;
     const it = draft.items.find((x) => x.id === row.dataset.item); if (!it) return;
     if (ds.f === 'unitKey') {
-      handlePackChange(it, tgt.value, it.productId ? productById(it.productId) : null);
+      switchLineUnit(it, tgt.value);
       persistDraft(); drawBill(el); return;
     }
     if (ds.f !== 'productId') return;
@@ -3336,6 +3785,48 @@ function wireBill(el) {
     }
     if (a === 'applyPartyRates') { applyPricesToItems(true); persistDraft(); drawBill(el); toast('Prices re-applied', 'ok'); return; }
     if (a === 'addRow') { draft.items.push(blankItem(null, { customer: currentParty(), priceListId: draft.priceListId })); persistDraft(); drawBill(el); return; }
+    if (a === 'quickAdd') {
+      /* one tap from the favourites strip: drop an empty first row, then add */
+      const p = productById(act.dataset.id); if (!p) return;
+      if (draft.items.length === 1 && !String(draft.items[0].name || '').trim()) draft.items = [];
+      const it = blankItem(p.id, { customer: currentParty(), priceListId: draft.priceListId });
+      applyPriceToItem(it);
+      draft.items.push(it);
+      persistDraft(); drawBill(el);
+      const last = draft.items[draft.items.length - 1];
+      const f = $('[data-item="' + last.id + '"] .pack-btns, [data-item="' + last.id + '"] [data-f=qty]', el);
+      if (f && f.focus) { try { f.focus(); } catch (e) {} }
+      toast(p.name + ' added', 'ok');
+      return;
+    }
+    if (a === 'repeatLast') {
+      const src = db.invoices.slice().sort(sortInvDesc)[0];
+      if (!src) return;
+      if (await confirmBox('Repeat the last bill?', 'Items and prices from ' + src.invoiceNo + ' (' + custOf(src).name +
+        ') are copied in. Quantities start at 0 — type them again, so nothing is billed twice by accident.', 'Repeat')) {
+        repeatBillDraft(src);
+        location.hash = '#/bill/new'; handleRoute();
+      }
+      return;
+    }
+    if (a === 'pickRecent') {
+      const it = draft.items.find((x) => x.id === act.dataset.id); if (!it) return;
+      it.rate = num(act.dataset.rate); it.gst = num(act.dataset.gst);
+      it.source = 'party'; it.sourceLabel = 'Last billed rate';
+      /* a remembered rate is per PACKET: re-derive the sheet price from it */
+      it.packPriceEdited = false;
+      const pk = linePack(it);
+      if (pk) { it.packRate = r2(num(it.rate) * pk.baseSize); recomputePackLine(it); }
+      persistDraft(); drawBill(el);
+      toast('Last billed rate ' + money(it.rate) + ' applied', 'ok');
+      return;
+    }
+    if (a === 'jumpLine') {
+      const row = $('[data-item="' + act.dataset.id + '"]', el);
+      if (row && row.scrollIntoView) { try { row.scrollIntoView({ behavior:'smooth', block:'center' }); } catch (e) {} }
+      const f = row ? $('[data-f=qty]', row) : null; if (f && f.focus) { try { f.focus(); } catch (e) {} }
+      return;
+    }
     if (a === 'delItem') {
       draft.items = draft.items.length > 1 ? draft.items.filter((x) => x.id !== act.dataset.id) : [blankItem()];
       persistDraft(); drawBill(el); return;
@@ -3491,7 +3982,10 @@ function applyPriceToItem(it) {
   it.priceListId = res.priceListId; it.partyRateId = res.partyRateId;
   it.unit = p.unit || 'pcs'; it.hsn = p.code || ''; it.name = p.name;
   const pk = linePack(it);
-  if (pk) { it.packRate = r2(res.rate * pk.size); it.packCost = r2(res.cost * pk.size); recomputePackLine(it); }
+  if (pk) {
+    it.packPriceEdited = false; it.packRateEnabled = false;
+    it.packRate = r2(res.rate * pk.baseSize); it.packCost = r2(res.cost * pk.baseSize); recomputePackLine(it);
+  }
 }
 function applyPricesToItems(force) {
   const cust = currentParty();
@@ -3504,7 +3998,12 @@ function applyPricesToItems(force) {
       it.source = res.source; it.sourceLabel = res.sourceLabel;
       it.priceListId = res.priceListId; it.partyRateId = res.partyRateId;
       const pk = linePack(it);
-      if (pk) { it.packRate = r2(res.rate * pk.size); it.packCost = r2(res.cost * pk.size); recomputePackLine(it); }
+      if (pk) {
+        /* A sheet price typed on this bill survives a rate re-apply (see
+           syncPackPriceFromBase) — only the cost is refreshed. */
+        if (!it.packPriceEdited) { it.packRate = r2(res.rate * pk.baseSize); it.packRateEnabled = false; }
+        it.packCost = r2(res.cost * pk.baseSize); recomputePackLine(it);
+      }
     }
     if (!it.name) { it.name = p.name; it.unit = p.unit || 'pcs'; it.hsn = p.code || ''; }
   });
@@ -3528,7 +4027,10 @@ function validateDraft() {
 function buildInvoiceFromDraft() {
   const t = calcTotals(draft.items, draft);
   const status = deriveStatus(t.grand, draft.amountReceived, draft.paymentButton);
-  const items = draft.items.filter((it) => String(it.name || '').trim()).map((it) => {
+  /* A line quantity may be 0 on a draft (a repeated bill with nothing re-typed
+     yet). Saving needs a real quantity — this is the same rule validateDraft
+     applies to the Save button. */
+  const items = draft.items.filter((it) => String(it.name || '').trim() && num(it.qty) > 0).map((it) => {
     const c = calcLine(it.qty, it.rate, it.gst, it.cost);
     const pk = linePack(it);
     return Object.assign({
@@ -3570,10 +4072,33 @@ function buildInvoiceFromDraft() {
 async function saveBill(el) {
   const v = validateDraft();
   if (v.errs.length) { toast(v.errs[0], 'bad'); return; }
+  /* Bill checks: never a silent block, never a silent save either. */
+  const checks = billChecks(draft.items, draft).filter((c) => c.level !== 'info');
+  if (checks.length) {
+    const done = $('[data-k=checksAck]', el);
+    if (!(done && done.checked)) {
+      const bad = checks.filter((c) => c.level === 'bad');
+      const msg = checks.slice(0, 6).map((c) => (c.level === 'bad' ? '● ' : '○ ') + c.msg).join('\n') +
+        (checks.length > 6 ? '\n…and ' + (checks.length - 6) + ' more' : '') +
+        '\n\nSave the bill anyway?';
+      const ok = await confirmBox(bad.length ? 'This bill sells below cost' : 'Please check this bill', msg, 'Save anyway', bad.length > 0);
+      if (!ok) return;
+    }
+  }
   const prevInv = draft.id ? byId(db.invoices, draft.id) : null;
-  /* stamp each line with the cost that is true RIGHT NOW (latest purchase rate),
-     so a purchase made after this bill was drafted still prices it correctly */
-  draft.items.forEach((it) => { if (it.productId) { const p = productById(it.productId); if (p) it.cost = effectiveCost(p); } });
+  /* NEW bills are costed at the latest purchase rate right now, so a purchase
+     entered after the bill was drafted still prices the profit correctly.
+     EDITING an old bill keeps the cost it was saved with — re-costing history
+     is the owner's explicit choice in Purchase → Re-price, never a side effect. */
+  if (!draft.id) {
+    draft.items.forEach((it) => {
+      if (!it.productId) return;
+      const p = productById(it.productId); if (!p) return;
+      it.cost = effectiveCost(p);
+      const pk = linePack(it);
+      if (pk) { it.packCost = r2(num(it.cost) * pk.baseSize); recomputePackLine(it); }
+    });
+  }
   const inv = buildInvoiceFromDraft();
   const isUpdate = !!draft.id;
   const saveCustomerBox = $('[data-k=saveCustomer]', el);
@@ -4042,7 +4567,11 @@ function renderInvoice(el, params) {
           '<div><h3>Bill Summary</h3><div class="sub">' + esc(inv.invoiceNo) + ' · ' + fmtDate(inv.date) + '</div></div></div>' +
           '<span class="pill ' + STATUS[inv.status].cls + '"><i></i>' + STATUS[inv.status].short + '</span></div>' +
         '<div class="kv"><span class="k">Customer</span><span class="v">' + esc(custOf(inv).name) + '</span></div>' +
-        '<div class="kv"><span class="k">Items</span><span class="v">' + inv.items.length + ' line(s) · ' + sum(inv.items, (i) => num(i.qty)) + ' qty</span></div>' +
+        '<div class="kv"><span class="k">Items</span><span class="v">' + inv.items.length + ' line(s) · ' + sum(inv.items, (i) => num(i.qty)) + ' ' +
+          esc((inv.items[0] && inv.items[0].unit) || 'qty') + '</span></div>' +
+        (inv.items.some((it) => linePack(it))
+          ? '<div class="kv"><span class="k">Packed as</span><span class="v" style="font-weight:700">' +
+              inv.items.filter((it) => linePack(it)).map((it) => packLineShort(it)).join('<br>') + '</span></div>' : '') +
         '<div class="kv"><span class="k">Sub Total</span><span class="v">' + money(t.subTotal) + '</span></div>' +
         '<div class="kv"><span class="k">Total GST</span><span class="v">' + money(t.totalGst) + '</span></div>' +
         (num(t.discount) > 0 ? '<div class="kv"><span class="k">Discount</span><span class="v">− ' + money(t.discount) + '</span></div>' : '') +
@@ -4055,6 +4584,7 @@ function renderInvoice(el, params) {
         '<div class="btn-row" style="margin-top:13px">' +
           '<button class="btn btn-outline btn-sm" data-act="edit">' + svgIcon('edit') + ' Edit</button>' +
           (inv.status !== 'received' ? '<button class="btn btn-sm btn-teal" data-act="collect">' + svgIcon('rupee') + ' Payment</button>' : '') +
+          '<button class="btn btn-sm btn-ghost" data-act="repeat">' + svgIcon('refresh') + ' Repeat bill</button>' +
           '<button class="btn btn-sm btn-ghost" data-act="duplicate">' + svgIcon('copy') + ' Duplicate</button>' +
           (custOf(inv).phone ? '<button class="btn btn-sm btn-green" data-act="wa">' + svgIcon('whatsapp') + ' WhatsApp</button>' : '') +
           '<button class="btn btn-sm btn-danger" data-act="del">' + svgIcon('trash') + '</button>' +
@@ -4088,6 +4618,14 @@ function renderInvoice(el, params) {
     if (a === 'saveNow') { sessionPreview = null; location.hash = '#/bill/' + (draft && draft.id ? draft.id : 'new'); return; }
     if (a === 'edit') { draft = invoiceToDraft(inv); persistDraft(); location.hash = '#/bill/' + inv.id; return; }
     if (a === 'collect') return openCollectModal(inv);
+    if (a === 'repeat') {
+      if (await confirmBox('Repeat this bill?', 'Items and prices from ' + inv.invoiceNo + ' are copied into a NEW bill.\n' +
+        'Quantities start at 0, and today\'s purchase cost is used for profit — this bill stays exactly as it is.', 'Repeat')) {
+        repeatBillDraft(inv);
+        location.hash = '#/bill/new'; handleRoute();
+      }
+      return;
+    }
     if (a === 'duplicate') {
       const copy = JSON.parse(JSON.stringify(inv));
       copy.id = uid('inv'); copy.invoiceNo = nextInvoiceNumber(); copy.date = todayISO();
@@ -4653,6 +5191,10 @@ function billCardHtml(iv) {
         '<span class="mini-tag">Margin ' + marginOf(iv) + '%</span>' +
         (iv.items.some((i) => i.source === 'party') ? '<span class="mini-tag teal">' + svgIcon('tag') + 'Party rate</span>' : '') +
         (iv.items.some((i) => i.source === 'list') ? '<span class="mini-tag violet">' + svgIcon('tags') + 'List</span>' : '') +
+        (iv.items.some((i) => linePack(i)) ? '<span class="mini-tag gold">' + svgIcon('box') + esc(packLineShort(iv.items.filter((i) => linePack(i))[0])) + '</span>' : '') +
+      '</div>' +
+      '<div class="row-meta" style="margin-top:5px">' +
+        '<button class="btn btn-sm btn-ghost" data-repeat="' + iv.id + '">' + svgIcon('refresh') + ' Repeat</button>' +
       '</div>' +
     '</div><span class="row-arrow">' + svgIcon('arrowRight') + '</span></div>';
 }
@@ -4697,7 +5239,17 @@ function renderHistory(el) {
           (q || historyState.status !== 'all' || historyState.date) ? 'Try another search word, another day, or clear the filter.' : 'Your saved invoices appear here — everything stays on this phone.',
           '<button class="btn btn-teal" data-act="new">' + svgIcon('plus') + ' Create New Bill</button>'));
 
-  onClick(el, (e) => {
+  onClick(el, async (e) => {
+    const rep = e.target.closest('[data-repeat]');
+    if (rep) {
+      const src = byId(db.invoices, rep.dataset.repeat);
+      if (!src) return;
+      if (await confirmBox('Repeat ' + src.invoiceNo + '?', 'Its items and prices are copied into a NEW bill.\n' +
+        'Quantities start at 0 and today\'s cost is used — this bill is not changed.', 'Repeat')) {
+        repeatBillDraft(src); location.hash = '#/bill/new'; handleRoute();
+      }
+      return;
+    }
     const inv = e.target.closest('[data-inv]');
     if (inv) { location.hash = '#/invoice/' + inv.dataset.inv; return; }
     const act = e.target.closest('[data-act]'); if (!act) return;
@@ -5108,7 +5660,9 @@ function buildPurchaseFromDraft() {
       /* full precision on pack lines so a reload reproduces the exact sheet price */
       qty: r2(num(l.qty)), rate: linePack(l) ? num(l.rate) : r2(num(l.rate)), gst: r2(num(l.gst)),
       taxable: l.taxable, gstAmt: l.gstAmt, total: l.total,
-      charges: l.charges, discountShare: l.discountShare, netValue: l.netValue, unitCost: l.unitCost
+      charges: l.charges, discountShare: l.discountShare, netValue: l.netValue,
+      /* unitCost is the landed cost per BASE unit — one number for stock & P/L */
+      unitCost: l.unitCost
     }, packLineFields(l))),
     charges: t.charges, discount: t.discount,
     totals: { subTotal: t.subTotal, totalGst: t.totalGst, charges: t.charges, discount: t.discount, grand: t.grand, qty: t.qty },
@@ -5120,18 +5674,29 @@ function buildPurchaseFromDraft() {
   };
 }
 
-/* ---- stock + cost effect of a purchase ---- */
+/* ---- stock + cost effect of a purchase ----
+   The ledger lookup (lastPurchaseOf) is the truth, so editing or deleting a
+   purchase in ANY order lands on the right stock and the right cost. The
+   product fields are refreshed from the ledger afterwards. */
+function refreshProductCost(p, exceptPurchaseId) {
+  if (!p) return;
+  const lp = lastPurchaseOf(p.id, exceptPurchaseId);
+  p.lastPurchase = lp || null;
+  if (lp) p.cost = r2(num(lp.unitCost || lp.rate));
+  else if (p.costManual != null && p.costManual !== '') p.cost = r2(num(p.costManual));
+  p.updated = nowStamp();
+}
 function applyPurchaseStock(pu) {
   if (!pu || pu._stockApplied) return;
   (pu.items || []).forEach((it) => {
     if (!it.productId) return;
     const p = productById(it.productId); if (!p) return;
-    if (num(it.qty) > 0) moveStock(p, num(it.qty), 'purchase', pu.purchaseNo || '', (pu.supplier && pu.supplier.name) || '', pu.date);
-    const landed = r2(num(it.unitCost || it.rate));
-    p.lastPurchase = { id: pu.id, no: pu.purchaseNo || '', date: pu.date, rate: r2(num(it.rate)),
-      unitCost: landed, qty: r2(num(it.qty)), supplier: (pu.supplier && pu.supplier.name) || '' };
-    p.cost = landed;                       /* the real cost of the item is now this */
-    p.updated = nowStamp();
+    if (num(it.qty) > 0) {
+      const pk = linePack(it);
+      moveStock(p, num(it.qty), 'purchase', pu.purchaseNo || '', (pu.supplier && pu.supplier.name) || '', pu.date,
+        pk ? { name: pk.name, size: pk.baseSize } : null);
+    }
+    refreshProductCost(p);
   });
   pu._stockApplied = true;
 }
@@ -5141,10 +5706,9 @@ function reversePurchaseStock(pu) {
     if (!it.productId) return;
     const p = productById(it.productId); if (!p) return;
     if (num(it.qty) > 0) moveStock(p, -num(it.qty), 'reversal', pu.purchaseNo || '', 'Purchase removed', pu.date);
-    const lp = lastPurchaseOf(p.id, pu.id);
-    p.lastPurchase = lp || null;
-    if (lp) p.cost = r2(num(lp.unitCost || lp.rate));
-    p.updated = nowStamp();
+    /* recompute from every OTHER purchase — deleting a middle bill must restore
+       the real newest rate, not the one that happened to be cached */
+    refreshProductCost(p, pu.id);
   });
   pu._stockApplied = false;
 }
@@ -5435,6 +5999,7 @@ function puItemRowHtml(it, i, line) {
         '</label><input class="control num" data-pf="rate" inputmode="decimal" value="' + esc(packRateValue(it)) + '"></div>' +
       '<div class="field"><label>GST %</label><input class="control num" data-pf="gst" inputmode="decimal" value="' + esc(it.gst) + '"></div>' +
     '</div>' +
+    packButtonRowHtml(it, 'pf') +
     packBarHtml(it, 'pf', p) +
     '<div class="item-calc">' +
       '<span>Taxable<b>' + money(line ? line.taxable : 0, false) + '</b></span>' +
@@ -5610,13 +6175,23 @@ function wirePurchase(el) {
       persistPuDraft();
     }
   };
+  el.onclick = (e) => {
+    const unitBtn = e.target.closest('[data-packunit]');
+    if (unitBtn) {
+      const row2 = unitBtn.closest('[data-pitem]');
+      const it2 = row2 ? puDraft.items.find((x) => x.id === row2.dataset.pitem) : null;
+      if (it2) { switchLineUnit(it2, unitBtn.dataset.packunit); persistPuDraft(); drawPurchase(el); }
+      return;
+    }
+    handlePurchaseClick(e);
+  };
   el.onchange = (e) => {
     const tgt = e.target, ds = tgt.dataset || {};
     const row = tgt.closest('[data-pitem]');
     if (!row) return;
     const it = puDraft.items.find((x) => x.id === row.dataset.pitem); if (!it) return;
     if (ds.pf === 'unitKey') {
-      handlePackChange(it, tgt.value, it.productId ? productById(it.productId) : null);
+      switchLineUnit(it, tgt.value);
       persistPuDraft(); drawPurchase(el); return;
     }
     if (ds.pf !== 'productId') return;
@@ -5641,7 +6216,7 @@ function wirePurchase(el) {
     persistPuDraft(); drawPurchase(el);
   };
 
-  onClick(el, async (e) => {
+  function handlePurchaseClick(e) {
     const act = e.target.closest('[data-act]'); if (!act) return;
     const a = act.dataset.act;
     if (a === 'manageSuppliers') { persistPuDraft(); location.hash = '#/suppliers'; return; }
@@ -5663,16 +6238,25 @@ function wirePurchase(el) {
     }
     if (a === 'puCancel') { clearPuDraft(); location.hash = '#/purchases'; return; }
     if (a === 'deletePu') {
-      if (await confirmBox('Delete this purchase?', puDraft.purchaseNo + ' will be removed and the stock it added will be taken back.', 'Delete', true)) {
-        reversePurchaseStock(byId(db.purchases, puDraft.id));
-        db.purchases = db.purchases.filter((x) => x.id !== puDraft.id);
-        saveDB(); clearPuDraft(); buildNav(); toast('Purchase deleted · stock restored'); location.hash = '#/purchases';
-      }
+      confirmBox('Delete this purchase?', puDraft.purchaseNo + ' will be removed and the stock it added will be taken back.', 'Delete', true)
+        .then((ok) => {
+          if (!ok) return;
+          reversePurchaseStock(byId(db.purchases, puDraft.id));
+          db.purchases = db.purchases.filter((x) => x.id !== puDraft.id);
+          saveDB(); clearPuDraft(); buildNav(); toast('Purchase deleted · stock restored'); location.hash = '#/purchases';
+        });
       return;
     }
     if (a === 'savePu') return savePurchase(el);
+  }
+  onClick(el, async (e) => {
+    const act = e.target.closest('[data-act]'); if (!act) return;
+    if (act.dataset.act === 'manageSuppliers') { persistPuDraft(); location.hash = '#/suppliers'; return; }
+    if (act.dataset.act === 'pickSupplier') { handlePurchaseClick(e); return; }
+    handlePurchaseClick(e);
   });
 }
+
 function selectSupplier(id, el) {
   const sp = supplierById(id); if (!sp) return;
   puDraft.supplierId = sp.id;
@@ -6084,6 +6668,8 @@ function renderStock(el, params) {
               (cls === 'out' ? '<span class="mini-tag red">OUT</span>' : cls === 'low' ? '<span class="mini-tag gold">LOW</span>' : '<span class="mini-tag green">OK</span>') + '</div>' +
               '<div style="font-size:11.5px;color:var(--muted);font-weight:600;margin-top:2px">cost ' + money(cost) + ' · sell ' + money(p.rate) +
               ' · value ' + moneyShort(qty * cost) + '</div>' +
+              (packLevels(p) && qty > 0 ? '<div style="font-size:11px;font-weight:700;color:var(--violet-ink);margin-top:2px">' +
+                esc(packSplitText(p, qty)) + '</div>' : '') +
               '<div class="stk-meter"><i style="width:' + w + '%"></i></div>' +
               '<div style="font-size:10.5px;color:var(--faint);font-weight:700;margin-top:4px">' + esc(cs.label) + ' · alert at ' + num(low) + '</div>' +
             '</div><span class="row-arrow">' + svgIcon('arrowRight') + '</span></div>';
@@ -6134,21 +6720,30 @@ function renderStockItem(el, productId) {
   const sold = db.invoices.reduce((n, iv) => n + sum((iv.items || []).filter((it) => it.productId === p.id), (it) => num(it.qty)), 0);
   const cls = qty <= 0 ? 'out' : qty <= low ? 'low' : '';
   const typeLabel = { purchase:'Purchase in', sale:'Sale out', adjust:'Adjustment', opening:'Opening stock', reversal:'Reversal' };
+  const flag = stockMultiplierFlag(p);
+  const packing = packingSummary(p);
 
   el.innerHTML =
     '<div class="invoice-actions">' +
       '<button class="btn btn-outline" data-act="back">' + svgIcon('back') + ' Stock</button>' +
       '<button class="btn btn-primary" data-act="buy">' + svgIcon('cart') + ' Buy</button>' +
       '<button class="btn btn-teal" data-act="adjust">' + svgIcon('edit') + ' Adjust</button>' +
+      (packLevels(p) ? '<button class="btn btn-gold" data-act="convert">' + svgIcon('refresh') + ' In sheets / boxes</button>' : '') +
     '</div>' +
+    (flag
+      ? '<div class="notice gold">' + svgIcon('alert') + '<div><b>This stock was recorded in ' + esc(flag.unit) + 's.</b> ' +
+          'The numbers below are in ' + esc(p.unit || 'pcs') + 's. Press <b>In sheets / boxes</b> to convert them exactly — ' +
+          'the change is written to the ledger and can be reversed.</div></div>' : '') +
     '<div class="card ' + (cls ? 'stock-alert-' + cls : '') + '">' +
       '<div class="card-head"><div class="card-title"><span class="dot ' + (cls === 'out' ? 'red' : cls === 'low' ? 'gold' : 'teal') + '">' + svgIcon('box') + '</span>' +
-        '<div><h3>' + esc(p.name) + '</h3><div class="sub">' + [p.code ? 'HSN ' + p.code : '', esc(p.unit || 'pcs')].filter(Boolean).join(' · ') + '</div></div></div>' +
+        '<div><h3>' + esc(p.name) + '</h3><div class="sub">' + [p.code ? 'HSN ' + p.code : '', esc(p.unit || 'pcs')].filter(Boolean).join(' · ') +
+          (packing ? ' · ' + esc(packing) : '') + '</div></div></div>' +
         '<span class="pill ' + (cls === 'out' ? 'unpaid' : cls === 'low' ? 'pending' : 'received') + '"><i></i>' +
         (cls === 'out' ? 'Out of stock' : cls === 'low' ? 'Low stock' : 'In stock') + '</span></div>' +
       '<div class="stk-row ' + cls + '" style="margin:4px 0 0;border:0;padding:11px 0 0">' +
         '<div class="stk-qty"><b>' + num(qty) + '</b><span>' + esc(p.unit || 'pcs') + '</span></div>' +
-        '<div style="flex:1;min-width:0"><div class="stk-meter" style="margin-top:0"><i style="width:' +
+        '<div style="flex:1;min-width:0">' + (packLevels(p) && qty > 0 ? '<div style="font-size:12px;font-weight:800;color:var(--violet-ink);margin-bottom:5px">= ' + esc(packSplitText(p, qty)) + '</div>' : '') +
+        '<div class="stk-meter" style="margin-top:0"><i style="width:' +
           (low > 0 ? clamp(qty / (low * 3 || 1) * 100, 3, 100) : (qty > 0 ? 100 : 0)) + '%"></i></div>' +
           '<div style="font-size:11px;color:var(--muted);font-weight:700;margin-top:6px">Alert level ' + num(low) + ' ' + esc(p.unit || 'pcs') + ' · ' +
           (qty <= 0 ? 'nothing left to sell' : qty <= low ? 're-order soon' : 'healthy') + '</div></div>' +
@@ -6173,7 +6768,8 @@ function renderStockItem(el, productId) {
       '<div><h3>Stock Ledger</h3><div class="sub">Last ' + moves.length + ' movement' + (moves.length === 1 ? '' : 's') + '</div></div></div></div>' +
       (moves.length ? moves.map((mv) => '<div class="stk-move"><span class="t"><b>' + esc(typeLabel[mv.type] || mv.type) + '</b> · ' + fmtDate(mv.date) +
           (mv.ref ? ' · ' + esc(mv.ref) : '') + (mv.note ? '<br>' + esc(mv.note) : '') + '</span>' +
-          '<span class="d ' + (mv.delta >= 0 ? 'in' : 'out') + '">' + (mv.delta >= 0 ? '+' : '−') + num(Math.abs(mv.delta)) + '</span></div>').join('')
+          '<span class="d ' + (mv.delta >= 0 ? 'in' : 'out') + '">' + (mv.delta >= 0 ? '+' : '−') + num(Math.abs(mv.delta)) +
+          (mv.unitName && num(mv.unitQty) ? '<small>' + num(mv.unitQty) + ' ' + esc(mv.unitName) + '</small>' : '') + '</span></div>').join('')
         : '<div class="hint">No stock movements yet. Record a purchase or adjust the opening stock.</div>') +
     '</div>' +
     (pus.length
@@ -6191,51 +6787,87 @@ function renderStockItem(el, productId) {
     if (a === 'back') { location.hash = '#/stock'; return; }
     if (a === 'buy') { const d = newPuDraft(p.id); persistPuDraft(); location.hash = '#/purchase/new'; return; }
     if (a === 'adjust') return openStockAdjust(p, () => handleRoute());
+    if (a === 'convert') return openStockConvertSheet(p, () => { buildNav(); handleRoute(); });
     if (a === 'product') return openProductModal(p);
     if (a === 'lowLevel') return openLowStockModal(p, () => handleRoute());
   });
 }
 function openStockAdjust(p, onDone) {
   const qty = stockQty(p);
-  const m = openModal(sheet('Adjust Stock', p.name + ' · currently ' + num(qty) + ' ' + (p.unit || 'pcs'),
+  const L = packLevels(p);
+  const base = String(p.unit || 'pcs');
+  let adjUnit = 'base';
+  const m = openModal(sheet('Adjust Stock', p.name + ' · currently ' + num(qty) + ' ' + base +
+      (L && qty > 0 ? ' (' + packSplitText(p, qty) + ')' : ''),
     '<div class="field"><label>Adjustment Type</label><select class="control" data-k="type">' +
       '<option value="set">Set exact stock count</option>' +
       '<option value="add">Add stock (found / returned)</option>' +
       '<option value="sub">Reduce stock (damage / loss / own use)</option>' +
       '<option value="opening">Set opening stock (starting point)</option></select></div>' +
-    '<div class="field"><label>Quantity</label><input class="control num" data-k="qty" inputmode="decimal" value="' + esc(qty) + '"></div>' +
+    (L ? '<div class="pack-btns">' + packUnits(p).map((u) =>
+        '<button type="button" class="pbtn' + (u.isBase ? ' active' : '') + '" data-count-in="' + esc(u.key) + '"><b>' +
+        esc(u.isBase ? base : u.name) + '</b><small>' + esc(u.isBase ? 'single' : packBaseSize(u) + ' ' + base) + '</small></button>').join('') +
+      '</div>' : '') +
+    '<div class="field"><label id="adjQtyLbl">Quantity (' + esc(base) + ')</label><input class="control num" data-k="qty" inputmode="decimal" value="' + esc(qty) + '"></div>' +
     '<div class="field"><label>Reason / Note</label><input class="control" data-k="note" placeholder="Physical count, damage, sample…"></div>' +
     '<div class="hint" id="adjHint">The change is written to the stock ledger with today\'s date.</div>',
     '<div class="modal-foot"><button class="btn btn-outline" data-act="cancel">Cancel</button>' +
     '<button class="btn btn-primary" data-act="save">' + svgIcon('check') + ' Save</button></div>'));
+  /* a stock count taken in boxes/sheets is typed in boxes/sheets; the ledger
+     still stores packets, so reports never change meaning */
+  const unitOf = () => (adjUnit === 'base' || !L ? null : findPackUnit(p, adjUnit));
+  const typedToBase = (raw) => { const u = unitOf(); return u && !u.isBase ? r2(num(raw) * packBaseSize(u)) : r2(num(raw)); };
   const hint = () => {
-    const type = $('[data-k=type]', m).value, v = num($('[data-k=qty]', m).value);
+    const type = $('[data-k=type]', m).value, v = typedToBase($('[data-k=qty]', m).value);
     const h = $('#adjHint', m); if (!h) return;
+    const u = unitOf();
     const next = type === 'set' || type === 'opening' ? v : type === 'add' ? qty + v : qty - v;
-    h.innerHTML = 'Stock becomes <b>' + num(r2(next)) + ' ' + esc(p.unit || 'pcs') + '</b>' +
+    h.innerHTML = 'Stock becomes <b>' + num(r2(next)) + ' ' + esc(base) + '</b>' +
+      (u && !u.isBase ? ' (' + num($('[data-k=qty]', m).value) + ' ' + esc(u.name) + ' × ' + packBaseSize(u) + ')' : '') +
       (next <= LOW_STOCK(p) ? ' — <b style="color:var(--danger)">at or below the alert level (' + num(LOW_STOCK(p)) + ')</b>' : '') + '.';
   };
-  m.addEventListener('input', hint); m.addEventListener('change', hint); hint();
+  const reLabel = () => {
+    const u = unitOf();
+    const lbl = $('#adjQtyLbl', m);
+    if (lbl) lbl.textContent = 'Quantity (' + (u && !u.isBase ? u.name : base) + ')';
+    const inp = $('[data-k=qty]', m);
+    const isSet = $('[data-k=type]', m).value === 'set' || $('[data-k=type]', m).value === 'opening';
+    if (inp) inp.value = isSet ? (u && !u.isBase ? r2(qty / packBaseSize(u)) : qty) : '';
+    hint();
+  };
+  m.addEventListener('input', hint);
+  m.addEventListener('change', (e) => { if (e.target.dataset.k === 'type') reLabel(); else hint(); });
   m.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-count-in]');
+    if (chip) {
+      adjUnit = chip.dataset.countIn;
+      $$('[data-count-in]', m).forEach((c) => c.classList.toggle('active', c === chip));
+      reLabel(); return;
+    }
     const act = e.target.closest('[data-act]'); if (!act) return;
     if (act.dataset.act === 'cancel') return closeModal();
-    const type = $('[data-k=type]', m).value, v = r2(num($('[data-k=qty]', m).value));
+    const type = $('[data-k=type]', m).value;
+    const u = unitOf();
+    const raw = r2(num($('[data-k=qty]', m).value));
+    const v = typedToBase(raw);
     const note = String($('[data-k=note]', m).value || '').trim();
-    if (v < 0) { toast('Quantity cannot be negative', 'bad'); return markInvalid(m, 'qty'); }
+    const ui = u && !u.isBase ? { name:u.name, size:packBaseSize(u) } : null;
+    if (raw < 0) { toast('Quantity cannot be negative', 'bad'); return markInvalid(m, 'qty'); }
     if (type === 'set' || type === 'opening') {
       const delta = r2(v - qty);
-      if (Math.abs(delta) > 0.0001) moveStock(p, delta, type === 'opening' ? 'opening' : 'adjust', '', note || 'Stock count set', todayISO());
-      if (type === 'opening') p.openStock = v;
+      if (Math.abs(delta) > 0.0001) moveStock(p, delta, type === 'opening' ? 'opening' : 'adjust', '', note || 'Stock count set', todayISO(), ui);
+      if (type === 'opening') { p.openStock = v; p.openStockUnit = base; }
     } else if (type === 'add') {
       if (v <= 0) { toast('Enter a quantity to add', 'bad'); return markInvalid(m, 'qty'); }
-      moveStock(p, v, 'adjust', '', note || 'Stock added', todayISO());
+      moveStock(p, v, 'adjust', '', note || 'Stock added', todayISO(), ui);
     } else {
       if (v <= 0) { toast('Enter a quantity to reduce', 'bad'); return markInvalid(m, 'qty'); }
-      if (v > qty) { toast('Only ' + num(qty) + ' ' + (p.unit || 'pcs') + ' in stock', 'bad'); return markInvalid(m, 'qty'); }
-      moveStock(p, -v, 'adjust', '', note || 'Stock reduced', todayISO());
+      if (v > qty) { toast('Only ' + num(qty) + ' ' + base + ' in stock', 'bad'); return markInvalid(m, 'qty'); }
+      moveStock(p, -v, 'adjust', '', note || 'Stock reduced', todayISO(), ui);
     }
     p.updated = nowStamp();
-    saveDB(); closeModal(); toast('Stock updated · ' + num(stockQty(p)) + ' ' + (p.unit || 'pcs'), 'ok');
+    saveDB(); closeModal(); toast('Stock updated · ' + num(stockQty(p)) + ' ' + base +
+      (packLevels(p) && stockQty(p) > 0 ? ' (' + packSplitText(p, stockQty(p)) + ')' : ''), 'ok');
     buildNav(); if (onDone) onDone();
   });
 }
@@ -6627,6 +7259,10 @@ function renderMore(el) {
       { hash:'#/history', icon:'list', tint:'navy', title:'Bill History', sub:'Search every bill', badge: db.invoices.length },
       { hash:'#/customers', icon:'users', tint:'violet', title:'Customers', sub:'Party rates & lists', badge: db.customers.length }
     ]},
+    { label:'Packing & Stock units', tiles:[
+      { act:'bulkPack', icon:'layers', tint:'violet', title:'Box & sheet setup', sub:'1 box = 20 sheets of 14', badge: db.products.filter((p) => packLevels(p)).length ? db.products.filter((p) => packLevels(p)).length + ' set' : 'set now' },
+      { hash:'#/stock', icon:'refresh', tint:'gold', title:'Stock in boxes?', sub:'Convert old stock exactly', badge: legacyStockCandidates().length ? legacyStockCandidates().length + ' item' + (legacyStockCandidates().length === 1 ? '' : 's') : '' }
+    ]},
     { label:'Business', tiles:[
       { hash:'#/pricelists', icon:'tags', tint:'gold', title:'Price Lists', sub:'Retail · wholesale · offer', badge: db.priceLists.length },
       { hash:'#/marketing', icon:'whatsapp', tint:'green', title:'Offers & Greetings', sub:'Share on WhatsApp' },
@@ -6648,7 +7284,7 @@ function renderMore(el) {
       '</div></div>' +
     groups.map((g) => '<div class="section-label">' + esc(g.label) + '</div>' +
       '<div class="more-grid">' + g.tiles.map((tl) =>
-        '<button type="button" class="more-tile ' + tl.tint + '" data-go="' + tl.hash + '">' +
+        '<button type="button" class="more-tile ' + tl.tint + '" ' + (tl.act ? 'data-act="' + tl.act + '"' : 'data-go="' + tl.hash + '"') + '>' +
           (tl.badge ? '<span class="mbadge">' + esc(tl.badge) + '</span>' : '') +
           '<span class="mi">' + svgIcon(tl.icon) + '</span>' +
           '<b>' + esc(tl.title) + '</b><small>' + esc(tl.sub) + '</small></button>').join('') + '</div>').join('') +
@@ -6668,6 +7304,8 @@ function renderMore(el) {
     creditCardHtml() +
     '<div style="height:20px"></div>';
   onClick(el, (e) => {
+    const bulk = e.target.closest('[data-act="bulkPack"]');
+    if (bulk) { openBulkPackSheet(() => { buildNav(); handleRoute(); }); return; }
     const q = e.target.closest('[data-theme-quick]'); if (!q) return;
     const t = applyTheme(q.dataset.themeQuick);
     db.settings.theme = t.id; saveDB();
@@ -7964,6 +8602,24 @@ function renderData(el) {
       '<div class="kv"><span class="k">Data size</span><span class="v">' + size + ' KB</span></div>' +
       '<div class="kv"><span class="k">Next invoice no</span><span class="v">' + esc(nextInvoiceNumber()) + '</span></div></div>' +
 
+    /* ---- box / sheet fixer ----------------------------------------------- */
+    (legacyStockCandidates().length || db.products.some((p) => packLevels(p))
+      ? '<div class="card"><div class="card-head"><div class="card-title"><span class="dot violet">' + svgIcon('box') + '</span>' +
+          '<div><h3>Box &amp; sheet stock</h3><div class="sub">Old stock recorded in whole boxes</div></div></div></div>' +
+          (legacyStockCandidates().length
+            ? '<div class="notice gold">' + svgIcon('alert') + '<div><b>' + legacyStockCandidates().length + ' product' +
+                (legacyStockCandidates().length === 1 ? ' has' : 's have') + ' stock counted in a pack.</b> ' +
+                'The number was saved before packs existed, so the app cannot know whether 2 meant 2 boxes or 2 packets. ' +
+                'Convert each one yourself — the old figure is kept and the change goes in the stock ledger.</div></div>'
+            : '<p style="font-size:13px;color:var(--muted);line-height:1.65;margin-bottom:11px">Every product\'s stock is already counted in single packets. ' +
+                'Box and sheet settings stay available on each product.</p>') +
+          '<div class="btn-row">' +
+            (legacyStockCandidates().length
+              ? '<button class="btn btn-gold" data-act="fixStock">' + svgIcon('refresh') + ' Convert old box stock</button>' : '') +
+            '<button class="btn btn-outline" data-act="goStock">' + svgIcon('box') + ' Stock screen</button>' +
+          '</div></div>'
+      : '') +
+
     /* ---- repair ---------------------------------------------------------- */
     '<div class="card"><div class="card-head"><div class="card-title"><span class="dot teal">' + svgIcon('refresh') + '</span>' +
       '<div><h3>Repair Data</h3><div class="sub">Safe — nothing is deleted</div></div></div></div>' +
@@ -7995,6 +8651,18 @@ function renderData(el) {
     const act = e.target.closest('[data-act]'); if (!act) return;
     const a = act.dataset.act;
     if (a === 'dismissBackupMsg') { lastBackupMessage = null; handleRoute(); return; }
+    if (a === 'goStock') { location.hash = '#/stock'; handleRoute(); return; }
+    if (a === 'fixStock') {
+      const list = legacyStockCandidates();
+      const first = list[0];
+      if (!first) return toast('Nothing left to convert', 'ok');
+      openStockConvertSheet(first.product, () => {
+        const left = legacyStockCandidates().length;
+        toast(left ? left + ' more to convert' : 'All box stock converted', 'ok');
+        handleRoute();
+      });
+      return;
+    }
     if (a === 'export') return exportJSON();
     if (a === 'shareBackup') return shareBackup();
     if (a === 'copyBackup') {
@@ -8419,6 +9087,419 @@ function loadSample(ask) {
 }
 
 /* =====================================================================
+   16b. SMART PACK TOOLS — bulk pack setup, legacy stock conversion,
+        bill checks, repeat bills, favourites and recent party prices
+   ===================================================================== */
+
+/* ---- A. bulk "1 box = N sheets = NxM packets" setup -------------------
+   Chips 280 pks is the classic case: 1 box = 20 sheets of 14 packets = 280
+   packets, and the OWNER says it that way. Opening 40 products one at a time is
+   slow, so this sheet writes the same two pack rows to every product selected. */
+function packPresets() {
+  const out = [
+    { id:'chips280', label:'Chips 280 pks — 1 box = 20 sheets of 14 packets (280)', unit:'packet',
+      sheet:{ name:'sheet', size:14 }, box:{ name:'box', size:20, of:'sheet' } },
+    { id:'chips280-20', label:'Chips — 1 box = 20 sheets of 20 packets (400)', unit:'packet',
+      sheet:{ name:'sheet', size:20 }, box:{ name:'box', size:20, of:'sheet' } },
+    { id:'chips14', label:'Chips — 1 box = 12 sheets of 14 packets', unit:'packet',
+      sheet:{ name:'sheet', size:14 }, box:{ name:'box', size:12, of:'sheet' } }
+  ];
+  /* Every existing pack setup in this shop is offered as a preset, so a second
+     product packed the same way is typed once and then reused. */
+  const seen = {};
+  db.products.forEach((p) => {
+    const L = packLevels(p);
+    if (!L) return;
+    const key = L.packs.map((u) => u.name + ':' + packBaseSize(u)).join('|');
+    if (seen[key]) { seen[key].count++; return; }
+    seen[key] = { id:'shop-' + Object.keys(seen).length, label:'From your products — ' + packingSummary(p), unit:String(p.unit || 'pcs'),
+      sheet:L.sheet ? { name:L.sheet.name, size:num(L.sheet.size), baseSize:packBaseSize(L.sheet) } : null,
+      box:L.box ? { name:L.box.name, size:num(L.box.size), of:L.box.of ? L.box.of.name : null, baseSize:packBaseSize(L.box) } : null,
+      count:1 };
+  });
+  Object.keys(seen).forEach((k) => { if (seen[k].count > 1) seen[k].label += ' (' + seen[k].count + ' products)'; out.push(seen[k]); });
+  return out;
+}
+function applyPresetToProduct(p, preset, opts) {
+  const o = opts || {};
+  const unit = String(p.unit || preset.unit || 'pcs');
+  const packs = [];
+  if (preset.sheet) {
+    packs.push({ id: uid('pk'), name: String(preset.sheet.name || 'sheet'), size: num(preset.sheet.size),
+      of: null, baseSize: num(preset.sheet.size), rate: 0, cost: 0 });
+  }
+  if (preset.box) {
+    const sheetSize = preset.sheet ? num(preset.sheet.size) : 0;
+    const of = preset.box.of && sheetSize > 0 ? { name: preset.box.of, size: sheetSize } : null;
+    packs.push({ id: uid('pk'), name: String(preset.box.name || 'box'), size: num(preset.box.size),
+      of, baseSize: of ? r2(num(preset.box.size) * sheetSize) : num(preset.box.size), rate: 0, cost: 0 });
+  }
+  p.packs = packs;
+  if (o.setUnit) p.unit = unit;
+  p.updated = nowStamp();
+  return p;
+}
+function openBulkPackSheet(onDone) {
+  const presets = packPresets();
+  let chosen = presets[0] ? presets[0].id : '';
+  const m = openModal(sheet('Box & sheet setup', 'One tap for every chips-type item',
+    '<div class="notice teal">' + svgIcon('box') + '<div><b>1 box = 20 sheets</b> — with 14 packets a sheet that is <b>280 packets</b> — stored as ' +
+      '<b>box = 20 sheet</b> and <b>sheet = 20 packet</b>, so stock always counts packets and the bill shows ' +
+      'the packs the customer actually gets.</div></div>' +
+    '<div class="field"><label>Packing preset</label><select class="control" data-k="preset">' +
+      presets.map((p) => '<option value="' + esc(p.id) + '">' + esc(p.label) + '</option>').join('') + '</select></div>' +
+    '<div class="grid-3" data-k="custom" hidden>' +
+      '<div class="field"><label>Sheet name</label><input class="control" data-k="sheetName" value="sheet"></div>' +
+      '<div class="field"><label>Packets / sheet</label><input class="control num" data-k="sheetSize" inputmode="decimal" value="20"></div>' +
+      '<div class="field"><label>Sheets / box</label><input class="control num" data-k="boxSize" inputmode="decimal" value="20"></div>' +
+    '</div>' +
+    '<div class="field"><label>Base unit</label><input class="control" data-k="unit" value="packet" placeholder="packet"></div>' +
+    '<label class="chk"><input type="checkbox" data-k="setUnit" checked> Also set each product\'s base unit to this</label>' +
+    '<div class="section-label" style="margin-top:12px">Apply to</div>' +
+    (db.products.length
+      ? '<div class="chk-list">' + db.products.map((p) => '<label class="chk"><input type="checkbox" data-prod="' + p.id + '"' +
+          (/chip/i.test(p.name) ? ' checked' : '') + '> ' + esc(p.name) +
+          (packLevels(p) ? ' <span class="mini-tag violet">' + esc(packingSummary(p)) + '</span>' : '') + '</label>').join('') + '</div>'
+      : '<div class="hint">Add a product first.</div>') +
+    '<div class="hint" id="bulkHint"></div>',
+    '<div class="modal-foot"><button class="btn btn-outline" data-act="cancel">Cancel</button>' +
+    '<button class="btn btn-primary" data-act="apply">' + svgIcon('check') + ' Apply packing</button></div>'));
+  const sel = $('[data-k=preset]', m);
+  function sync() {
+    const pr = presets.find((x) => x.id === sel.value) || {};
+    const custom = !pr.sheet || sel.value === 'custom';
+    const box = $('[data-k=custom]', m); if (box) box.hidden = !custom;
+    if (!custom) {
+      $('[data-k=sheetName]', m).value = pr.sheet.name || 'sheet';
+      $('[data-k=sheetSize]', m).value = pr.sheet.size || '';
+      $('[data-k=boxSize]', m).value = pr.box ? pr.box.size : '';
+    }
+    $('[data-k=unit]', m).value = pr.unit || 'packet';
+    const picked = $$('[data-prod]', m).filter((c) => c.checked).length;
+    const h = $('#bulkHint', m);
+    if (h) h.innerHTML = picked + ' product' + (picked === 1 ? '' : 's') + ' selected. Existing pack prices stay; only the sizes are rewritten.';
+  }
+  sel.addEventListener('change', sync);
+  m.addEventListener('input', sync);
+  sync();
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    if (b.dataset.act === 'cancel') return closeModal();
+    const pr = presets.find((x) => x.id === sel.value) || {};
+    const custom = !pr.sheet || sel.value === 'custom';
+    const preset = custom ? {
+      unit: String($('[data-k=unit]', m).value || 'packet').trim(),
+      sheet: { name: String($('[data-k=sheetName]', m).value || 'sheet').trim(), size: num($('[data-k=sheetSize]', m).value) },
+      box: num($('[data-k=boxSize]', m).value) > 0
+        ? { name: 'box', size: num($('[data-k=boxSize]', m).value), of: String($('[data-k=sheetName]', m).value || 'sheet').trim() } : null
+    } : pr;
+    const setUnit = $('[data-k=setUnit]', m).checked;
+    const ids = $$('[data-prod]', m).filter((c) => c.checked).map((c) => c.dataset.prod);
+    if (!ids.length) { toast('Tick the products to apply this packing to', 'bad'); return; }
+    if (!preset.sheet || !(num(preset.sheet.size) > 0)) { toast('Enter how many packets are in one sheet', 'bad'); return; }
+    ids.forEach((id) => { const p = productById(id); if (p) applyPresetToProduct(p, preset, { setUnit }); });
+    saveDB(); closeModal(); buildNav();
+    toast('Packing applied to ' + ids.length + ' product' + (ids.length === 1 ? '' : 's'), 'ok');
+    if (onDone) onDone(); else handleRoute();
+  });
+}
+
+/* ---- B. legacy stock recorded in boxes (2 boxes counted as 2 packets) ----
+   Old bills and purchases have no record of which unit was typed, so the app
+   never guesses: opening stock carries the unit you chose, and this sheet makes
+   the correction explicit, previews it, and writes it to the ledger. */
+/* A product needs the fixer when its stock figure predates packs: it has a pack
+   setup, stock on hand, and no record of which unit the opening count used.
+   Products whose opening stock was already converted are left alone. */
+function legacyStockCandidates() {
+  return db.products.filter((p) => {
+    const L = packLevels(p);
+    if (!L) return false;
+    if (!(stockQty(p) > 0)) return false;
+    if (p.openStockUnit && p.openStockUnit !== (p.unit || 'pcs')) return false;
+    return true;
+  }).map((p) => {
+    const L = packLevels(p);
+    const sheetSize = packBaseSize(L.sheet);
+    const boxSize = L.box ? packBaseSize(L.box) : 0;
+    return { product:p, sheetSize, boxSize,
+      qty: stockQty(p), unitWas: p.openStockUnit || p.unit || 'pcs',
+      guessed: p.openStockUnit ? '' : 'opening stock recorded before this version' };
+  });
+}
+/* Re-state a stock figure in a different unit. mult 400 turns "2 boxes" into
+   "800 packets"; mult 1/400 turns it back. A conversion is never destructive:
+   the ledger note records exactly what happened, so the owner can see and undo
+   it. */
+function convertStockUnits(p, mult, applyTo) {
+  const m = num(mult);
+  if (!p || !(m > 0) || Math.abs(m - 1) < 1e-9) return null;
+  const before = stockQty(p);
+  const after = r2(before * m);
+  const info = (applyTo && num(applyTo.size) > 1) ? { name: applyTo.name, size: num(applyTo.size) } : null;
+  moveStock(p, r2(after - before), 'adjust', '', 'Converted ' + num(before) + ' ' + (p.openStockUnit || p.unit || 'pcs') +
+    ' → ' + num(after) + ' ' + (p.unit || 'pcs') + ' ×' + m, todayISO(), info);
+  p.openStock = r2(num(p.openStock) * m);
+  p.openStockUnit = String(p.unit || 'pcs');
+  p.updated = nowStamp();
+  return { before, after, mult: m };
+}
+function openStockConvertSheet(p, onDone) {
+  const L = packLevels(p);
+  if (!L) { toast('Set the sheet / box packing for this product first', 'bad'); return; }
+  const base = String(p.unit || 'pcs');
+  const sheetSize = packBaseSize(L.sheet);
+  const boxSize = L.box ? packBaseSize(L.box) : 0;
+  const flag = stockMultiplierFlag(p);
+  const current = stockQty(p);
+  const m = openModal(sheet('Stock recorded in boxes?',
+    p.name + ' · now ' + num(current) + ' ' + base,
+    '<div class="notice gold">' + svgIcon('alert') + '<div><b>Old stock was counted in the wrong unit.</b> ' +
+      'Before this version a stock figure of <b>2</b> meant <b>2 boxes</b>, but the app read it as ' +
+      '<b>2 ' + esc(base) + 's</b>. Nothing is changed until you press the button — the correction is written to the stock ledger.</div></div>' +
+    '<div class="chips">' +
+      '<button class="chip" data-mult="' + sheetSize + '" data-name="' + esc(L.sheet.name) + '">1 ' + esc(L.sheet.name) + ' = ' + sheetSize + ' ' + esc(base) + '</button>' +
+      (boxSize ? '<button class="chip" data-mult="' + boxSize + '" data-name="' + esc(L.box.name) + '">1 ' + esc(L.box.name) + ' = ' + boxSize + ' ' + esc(base) + '</button>' : '') +
+      '<button class="chip" data-mult="1" data-name="">No — already in ' + esc(base) + 's</button>' +
+    '</div>' +
+    '<div class="pack-note">' + svgIcon('box') + '<span id="convPreview">Choose the unit those numbers were counted in.</span></div>' +
+    '<div class="pack-fields"><div class="field"><label>Conversion ×</label><input class="control num" data-k="mult" inputmode="decimal" value="' + (flag ? flag.mult : sheetSize) + '"></div>' +
+      '<div class="field"><label>Their unit</label><input class="control" data-k="unit" value="' + esc(flag ? flag.unit : L.sheet.name) + '"></div></div>' +
+    '<div class="hint">Only do this if the figure above really meant ' + esc(L.sheet.name) + 's or ' + esc(L.box ? L.box.name : 'boxes') +
+      '. A shop already counting ' + esc(base) + 's leaves it alone — nothing else changes.</div>',
+    '<div class="modal-foot"><button class="btn btn-outline" data-act="cancel">Cancel</button>' +
+    '<button class="btn btn-gold" data-act="apply">' + svgIcon('refresh') + ' Convert stock</button></div>'));
+  const prev = () => {
+    const mult = num($('[data-k=mult]', m).value);
+    const unit = String($('[data-k=unit]', m).value || 'pack');
+    const box = $('#convPreview', m);
+    if (!box) return;
+    const after = r2(current * mult);
+    box.textContent = mult > 1
+      ? num(current) + ' ' + unit + (mult === 1 ? '' : 's') + ' × ' + mult + ' = ' + num(after) + ' ' + base + ' in stock'
+      : num(current) + ' ' + base + ' — no change';
+  };
+  m.addEventListener('input', prev); prev();
+  m.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-mult]');
+    if (chip) {
+      $('[data-k=mult]', m).value = chip.dataset.mult;
+      $('[data-k=unit]', m).value = chip.dataset.name;
+      chip.parentElement.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', c === chip));
+      prev(); return;
+    }
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    if (b.dataset.act === 'cancel') return closeModal();
+    const mult = num($('[data-k=mult]', m).value);
+    const unit = String($('[data-k=unit]', m).value || 'pack');
+    closeModal();
+    if (!(mult > 1)) { toast('Stock left as ' + num(current) + ' ' + base, 'info'); if (onDone) onDone(); return; }
+    const res = convertStockUnits(p, mult, { name: unit, size: mult });
+    saveDB(); buildNav();
+    toast('Stock is now ' + num(res.after) + ' ' + base + ' (' + num(res.before) + ' × ' + mult + ')', 'ok');
+    if (onDone) onDone(); else handleRoute();
+  });
+}
+
+/* ---- C. bill checks ---------------------------------------------------
+   Things that cost money and are easy to miss on a busy counter. They are
+   WARNINGS: the owner can still save. Errors already block in validateDraft. */
+function billChecks(items, d) {
+  const out = [];
+  const list = (items || []).filter((it) => String(it.name || '').trim());
+  const put = (level, msg, ids) => out.push({ level, msg, ids: ids || [] });
+  list.forEach((it, i) => {
+    const lineNo = 'Item ' + (i + 1) + ' (' + it.name + ')';
+    const p = it.productId ? productById(it.productId) : null;
+    const c = calcLine(it.qty, it.rate, it.gst, it.cost);
+    if (!it.productId) put('info', lineNo + ' is a custom item — stock and purchase cost are not tracked for it.');
+    if (p && d && d.customerId) {
+      const party = byId(db.customers, d.customerId);
+      const pr = party && (party.rates || []).find((r) => r && r.productId === p.id);
+      if (pr && r2(num(pr.rate)) > 0 && r2(it.rate) > r2(num(pr.rate)) + 0.004) {
+        put('warn', lineNo + ' is billed at ' + money(it.rate) + ' — ' + party.name + '\'s agreed rate is ' + money(pr.rate) + '.',
+          [it.id]);
+      }
+    }
+    if (p && num(it.cost) > 0 && num(it.rate) > 0 && c.profit < 0) {
+      put('bad', lineNo + ' sells below cost: ' + money(it.rate) + ' vs cost ' + money(it.cost) + ' (' + money(-c.profit) + ' loss).', [it.id]);
+    }
+    const available = p ? stockQty(p) : 0;
+    if (p && stockTracked(p) && available > 0 && num(it.qty) > available + 0.0001) {
+      put('warn', lineNo + ': billing ' + num(it.qty) + ' ' + (p.unit || 'pcs') + ' but only ' + num(available) + ' in stock.', [it.id]);
+    }
+    if (p && r2(num(it.gst)) !== r2(num(p.gst))) {
+      put('info', lineNo + ' GST is ' + num(it.gst) + '% but the product is set to ' + num(p.gst) + '%.', [it.id]);
+    }
+    if (p && d && d.priceListId) {
+      const pl = priceListById(d.priceListId);
+      const opt = pl && (pl.rates || []).find((r) => r && r.productId === p.id);
+      if (opt && r2(num(opt.rate)) > 0 && r2(it.rate) < r2(num(opt.rate)) - 0.004) {
+        put('info', lineNo + ' is below the ' + pl.name + ' price (' + money(opt.rate) + ').', [it.id]);
+      }
+    }
+    if (!(num(it.hsn) > 0) && !String(it.hsn || '').trim()) {
+      put('info', lineNo + ' has no HSN / item code — needed on a GST bill.', [it.id]);
+    }
+  });
+  const ids = {};
+  list.forEach((it) => { ids[it.productId] = (ids[it.productId] || 0) + 1; });
+  Object.keys(ids).forEach((pid) => {
+    if (!pid || ids[pid] < 2) return;
+    const p = productById(pid);
+    put('info', (p ? p.name : 'An item') + ' appears on ' + ids[pid] + ' lines — merge them for a cleaner bill.');
+  });
+  if (d) {
+    const t = calcTotals(items, d);
+    if (d.customerId) {
+      const party = byId(db.customers, d.customerId);
+      if (party && !String(party.gstin || '').trim() && num(t.grand) >= 50000) {
+        put('warn', 'This bill is ' + money(t.grand) + ' but ' + party.name + ' has no GSTIN saved.');
+      }
+      if (party && !String(party.phone || '').trim()) put('info', party.name + ' has no phone number — reminders cannot be sent.');
+    }
+    if (String(d.date || '') > todayISO()) put('warn', 'The bill date ' + fmtDate(d.date) + ' is in the future.');
+    if (num(d.amountReceived) > num(t.grand) + 0.01) {
+      put('warn', 'Received ' + money(d.amountReceived) + ' is more than the bill total ' + money(t.grand) + '.');
+    }
+    if (num(d.discount) > 0 && num(t.subTotal) > 0 && num(d.discount) > num(t.subTotal) * 0.25) {
+      put('warn', 'Discount ' + money(d.discount) + ' is over 25% of the taxable value.');
+    }
+  }
+  return out;
+}
+function billCheckHtml(list) {
+  if (!list || !list.length) return '';
+  const ico = { bad:'alert', warn:'alert', info:'info' };
+  const cls = { bad:'red', warn:'gold', info:'' };
+  return list.map((c) => '<button type="button" class="check-row ' + cls[c.level] + '"' +
+      (c.ids && c.ids.length ? ' data-act="jumpLine" data-id="' + c.ids[0] + '"' : '') + '>' +
+      svgIcon(ico[c.level]) + '<span>' + esc(c.msg) + '</span>' +
+      (c.ids && c.ids.length ? '<b>' + svgIcon('arrowRight') + '</b>' : '') + '</button>').join('');
+}
+
+/* ---- C2. the save / edit / delete path, callable without a DOM -------------
+   The Save button does more than build an object: it stamps the cost, keeps old
+   bills' cost on edit, re-applies stock exactly once and files customer rates.
+   These three wrappers are that path, so it can be checked before a release. */
+function setDraftFromBill(inv) {
+  if (!inv) return null;
+  draft = invoiceToDraft(inv);
+  return draft;
+}
+function getDraft() { return draft; }
+function commitBill(items, opts) {
+  const o = opts || {};
+  draft = draft || newDraft();
+  draft.items = items || draft.items;
+  if (o.date) draft.date = o.date;
+  if (o.customerId !== undefined) {
+    draft.customerId = o.customerId;
+    /* the header is a snapshot of the party — keep it in step with the id */
+    const c = o.customerId ? byId(db.customers, o.customerId) : null;
+    if (c) draft.customer = Object.assign({}, c); else if (!o.customerId) draft.customer = null;
+  }
+  if (o.id) draft.id = o.id;
+  const prevInv = draft.id ? byId(db.invoices, draft.id) : null;
+  /* NEW bills take the cost that is true right now; EDITS keep the saved cost */
+  if (!draft.id) {
+    draft.items.forEach((it) => {
+      if (!it.productId) return;
+      const p = productById(it.productId); if (!p) return;
+      it.cost = effectiveCost(p);
+      const pk = linePack(it);
+      if (pk) { it.packCost = r2(num(it.cost) * pk.baseSize); recomputePackLine(it); }
+    });
+  }
+  const inv = buildInvoiceFromDraft();
+  const n = invNumberFrom(inv.invoiceNo);
+  if (n > (db.counters.invoice || 0)) db.counters.invoice = n;
+  reapplySaleStock(prevInv, inv);
+  const idx = db.invoices.findIndex((x) => x.id === inv.id);
+  if (idx >= 0) db.invoices[idx] = inv; else db.invoices.push(inv);
+  saveDB(); clearDraft();
+  return inv;
+}
+function deleteBill(id) {
+  const inv = byId(db.invoices, id);
+  if (!inv) return null;
+  reverseSaleStock(inv, 'Bill deleted');
+  db.invoices = db.invoices.filter((x) => x.id !== id);
+  saveDB();
+  return inv;
+}
+
+/* ---- D. repeat bill / favourite items / recent party prices ----------- */
+function favouriteProducts() {
+  const fav = db.products.filter((p) => p.favourite);
+  if (fav.length) return fav;
+  /* With no favourites set, the items this shop really sells are the top 8 by
+     quantity sold — the bill builder gets useful chips on day one. */
+  const sold = {};
+  db.invoices.forEach((iv) => (iv.items || []).forEach((it) => {
+    if (it.productId) sold[it.productId] = (sold[it.productId] || 0) + num(it.qty);
+  }));
+  return db.products.slice().sort((a, b) => (sold[b.id] || 0) - (sold[a.id] || 0)).slice(0, 8);
+}
+function toggleFavourite(productId) {
+  const p = productById(productId); if (!p) return null;
+  p.favourite = !p.favourite; p.updated = nowStamp(); saveDB();
+  return p.favourite;
+}
+/* The last few rates this party was actually billed, per item. */
+function recentPartyPrices(customerId, productId, limit) {
+  if (!customerId || !productId) return [];
+  const out = [];
+  const seen = {};
+  db.invoices.filter((iv) => iv.customerId === customerId)
+    .slice().sort(sortInvDesc)
+    .forEach((iv) => {
+      (iv.items || []).forEach((it) => {
+        if (it.productId !== productId) return;
+        const key = r2(num(it.rate)).toFixed(4) + '|' + r2(num(it.gst));
+        if (seen[key]) return;
+        seen[key] = 1;
+        out.push({ rate:r2(num(it.rate)), gst:r2(num(it.gst)), date:iv.date, invoiceNo:iv.invoiceNo,
+          unitMode:it.unitMode || 'base', packName:it.packName || '', packRate:num(it.packRate) });
+      });
+    });
+  return out.slice(0, limit || 3);
+}
+function repeatBillDraft(inv) {
+  if (!inv) return null;
+  const prev = invoiceToDraft(inv);
+  const today = todayISO();
+  draft = {
+    id: null, invoiceNo: nextInvoiceNumber(), date: today,
+    customerId: inv.customerId || null,
+    customer: Object.assign({ name:'', phone:'', address:'', gstin:'' }, inv.customer || {}),
+    priceListId: inv.priceListId || null,
+    items: (inv.items || []).map((it) => {
+      const copy = JSON.parse(JSON.stringify(it));
+      copy.id = uid('it');
+      copy.qty = 0; copy.packQty = 0;       /* quantities are re-typed, prices kept */
+      copy.source = copy.source || 'manual';
+      return copy;
+    }),
+    discount: 0, roundOff: 0, taxPayable: 0, expenses: [], taxInclusive: !!inv.taxInclusive,
+    paymentButton: 'unpaid', amountReceived: 0, paymentMode: 'Cash', paymentDate: today,
+    paymentNote: '', payments: [], notes: ''
+  };
+  /* refresh the cost so this repeat makes profit at TODAY'S cost, not the old
+     bill's cost — old bills are never touched, new ones always use the latest */
+  draft.items.forEach((it) => {
+    if (!it.productId) return;
+    const p = productById(it.productId);
+    if (!p) return;
+    it.cost = effectiveCost(p);
+    if (linePack(it)) { it.packCost = r2(num(it.cost) * num(linePack(it).baseSize)); recomputePackLine(it); }
+  });
+  persistDraft();
+  void prev;
+  return draft;
+}
+
+/* =====================================================================
    17. BOOT
    ===================================================================== */
 let deferredPrompt = null;
@@ -8596,7 +9677,15 @@ if (typeof window !== 'undefined') {
     packUnits, findPackUnit, packUnitPrice, packUnitCost, linePack, applyPackToLine,
     recomputePackLine, clearPackFromLine, setLineUnit, packLineText, packLineShort,
     packLineFields, packLinePdf, syncPackPriceFromBase, packBarHtml, handlePackInput, handlePackChange,
-    productPacksHtml, readProductPacks, packQtyValue, packRateValue,
+    productPacksHtml, readProductPacks, packQtyValue, packRateValue, packBaseSize, packUnitLabel,
+    packLevels, packingSummary, convertQty, packContentsText, packSplitText, stockMultiplierFlag,
+    effectiveCostInfo, purchaseCostOf, refreshProductCost, reverseMove, lineUnitInfo,
+    /* v5.4 — box & sheet purchases, per-bill sheet price, latest-cost P/L, smart tools */
+    packPresets, applyPresetToProduct, openBulkPackSheet, legacyStockCandidates, convertStockUnits,
+    openStockConvertSheet, billChecks, billCheckHtml, favouriteProducts, toggleFavourite,
+    recentPartyPrices, repeatBillDraft, switchLineUnit, blankItem, invoiceToDraft,
+    buildInvoiceFromDraft, packUnitPrice, packUnitCost, setDraftFromBill, getDraft, commitBill,
+    deleteBill, newDraft,
     /* v5.2 — simple backup & restore */
     backupCounts, backupCountsText, backupFileName, backupPayload, parseBackupText,
     readBackupFile, restoreBackupData, restoreFromText, undoLastRestore, shareBackup,
