@@ -129,7 +129,8 @@ section('2. Buying as boxes adds the right packets; selling as boxes removes the
   eq(line.qty, 400, 'stored bill line quantity is in packets');
   eq(line.packQty, 1, 'stored bill line remembers it was 1 box');
   eq(line.packBase, 400, 'stored bill line remembers a box is 400 packets');
-  ok(A.packLinePdf(line) === '1 box x20 sheet = 400 packet', 'PDF line reads "1 box x20 sheet = 400 packets"', A.packLinePdf(line));
+  ok(A.packLinePdf(line) === '1 box x20 sheets of 20 packets = 400 packet',
+    'PDF line names the box contents and the packet total', A.packLinePdf(line));
   ok(A.packLineShort(line).indexOf('1 box × 20 sheet') === 0, 'on-screen line keeps the owner\'s words', A.packLineShort(line));
 }
 
@@ -262,8 +263,11 @@ section('6. Existing stock recorded in boxes is converted explicitly, never gues
   eq(A.stockQty(A.db.products[0]), 400, 'selling 1 box from converted stock is exact');
   /* the conversion is idempotent: running it again with ×1 changes nothing */
   const again = A.convertStockUnits(A.db.products[0], 1, null);
-  eq(again, null, 'a ×1 "already in packets" choice changes nothing');
+  ok(again && again.mult === 1, 'a ×1 "already in packets" choice is accepted as the answer');
   eq(A.stockQty(A.db.products[0]), 400, 'stock untouched by a no-op conversion');
+  const movesNow = A.stockMovesOf('p-chips').length;
+  A.convertStockUnits(A.db.products[0], 1, null);
+  eq(A.stockMovesOf('p-chips').length, movesNow, 'a no-op conversion writes no ledger move');
 }
 
 /* ===================== 7. BILLING IMPROVEMENTS (the discussed list) */
@@ -502,6 +506,80 @@ section('14. Typing more sheets than one box switches to boxes, money unchanged'
   eq(it.packName, 'box', 'a smaller number is read in the unit now on the line');
   eq(it.qty, 840, '3 boxes = 840 packets');
   ok(it.packQtyKind === '', 'the auto mark is cleared when the owner types again');
+}
+
+/* =============================================================== 15. BATCH SIZES
+   The sheet size differs between batches (14, 12, 10...). Changing it on the
+   LINE must re-derive everything from it — and never collapse a box to a flat
+   packet count. */
+section('15. A batch with a different sheet size is handled on the line');
+{
+  const { ARSATH: A } = loadApp({ seed: seedWithChips() });
+  const p = A.db.products[0];
+  p.packs = [
+    { id:'pk-sheet', name:'sheet', size:14, baseSize:14 },
+    { id:'pk-box', name:'box', size:20, of:{ name:'sheet', size:14 }, baseSize:280 }
+  ];
+  const it = A.blankItem('p-chips', { customer: null });
+  A.switchLineUnit(it, 'pk-sheet');
+  A.handlePackInput(it, 'packSize', 12);              /* this batch: 12 a sheet */
+  eq(it.packSize, 12, 'the sheet is 12 packets on this line');
+  eq(it.packBase, 12, 'one sheet is 12 packets');
+  A.handlePackInput(it, 'qty', 5);
+  eq(it.qty, 60, '5 sheets of 12 is 60 packets');
+  eq(A.packLinePdf(it), '5 sheets x12 packets = 60 packet', 'the bill says 12 packets a sheet');
+
+  /* a BOX line: the same field means sheets per box */
+  const b = A.blankItem('p-chips', { customer: null });
+  A.switchLineUnit(b, 'pk-box');
+  A.handlePackInput(b, 'packSize', 12);               /* this batch: 12 sheets a box */
+  eq(b.packSize, 12, 'the box holds 12 sheets');
+  eq(b.packBase, 168, '12 sheets of 14 = 168 packets, not 12');
+  ok(A.packLineText(b).indexOf('12 sheets') >= 0, 'the line names the batch size', A.packLineText(b));
+
+  /* money survives a batch change, and a part box keeps its price per packet */
+  const c = A.blankItem('p-chips', { customer: null });
+  A.switchLineUnit(c, 'pk-sheet');
+  c.packRate = 1100; c.packPriceEdited = true; A.recomputePackLine(c);
+  A.handlePackInput(c, 'packSize', 10);               /* 10 a sheet, ₹1,100 a sheet */
+  const money10 = A.calcLine(c.qty, c.rate, c.gst, c.cost).taxable;
+  eq(money10, 1100, 'one 10-packet sheet at 1,100 is still 1,100');
+  A.handlePackInput(c, 'qty', 21);                    /* past one box of 20 sheets */
+  eq(c.packQty, 1.05, '21 sheets of 10 is 1.05 boxes');
+  eq(c.qty, 210, '1.05 boxes of 200 packets is 210 packets');
+  eq(A.calcLine(c.qty, c.rate, c.gst, c.cost).taxable, 23100, '21 sheets at 1,100 is exactly 23,100');
+}
+
+/* =============================================================== 16. THE BOX-STOCK QUESTION
+   It is asked once, answered once, and then never again — and answering it
+   must never double the stock. */
+section('16. "Was this stock counted in boxes?" is asked once and answered once');
+{
+  const { ARSATH: A } = loadApp({ seed: seedWithChips() });
+  const p = A.db.products[0];
+  A.moveStock(p, 2, 'opening', '', 'Opening stock', A.todayISO());
+  eq(A.legacyStockCandidates().length, 1, 'a product with stock and packs is asked');
+  const q = A.stockMultiplierFlag(p);
+  ok(q && q.mult === 400 && q.unit === 'box', 'the question offers the real box size', JSON.stringify(q));
+
+  A.convertStockUnits(p, 400, { name:'box', size:400 });
+  eq(A.stockQty(p), 800, 'answering "boxes" converts to 800 packets');
+  eq(A.legacyStockCandidates().length, 0, 'the product is never asked again');
+  eq(A.stockMultiplierFlag(p), null, 'and the banner is gone');
+
+  /* a second convert would be a disaster — make sure the UI path cannot offer it */
+  const again = A.legacyStockCandidates();
+  eq(again.length, 0, 'nothing offers a second conversion');
+
+  /* the "already in packets" answer clears it too, with no stock change */
+  const p2 = A.db.products[0];
+  A.db.products[0].stock.mulFlag = {};
+  eq(A.legacyStockCandidates().length, 1, 'a fresh unanswered product is asked again');
+  const before = A.stockQty(p2);
+  const res = A.convertStockUnits(p2, 1, null);
+  eq(res.after, before, 'the no-change answer leaves stock alone');
+  eq(A.legacyStockCandidates().length, 0, 'and it is remembered');
+  eq(A.stockMultiplierFlag(p2), null, 'no banner after a no-change answer');
 }
 
 /* ================================================================= summary */

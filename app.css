@@ -2034,3 +2034,7 @@ html[data-dark="1"] .check-row{background:var(--surface)}
   .pbtn{min-width:66px;padding:6px 8px}
   .check-row{font-size:11px}
 }
+
+/* v5.4.1 — the per-batch pack count is a real field, not a footnote */
+.pack-batch{font-size:10.5px;line-height:1.45;color:var(--muted);font-weight:700;margin-top:2px}
+.pack-batch b{color:var(--navy)}

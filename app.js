@@ -36,7 +36,7 @@ const BACKUP_KEY  = 'arsath_agencies_backup';
 const BACKUP_EVERY_MS = 5 * 60 * 1000;      // rolling snapshot at most every 5 min
 let lastBackupAt = 0;
 let RESTORED_FROM_BACKUP = null;            // set when boot had to fall back
-const DB_VERSION  = 3;
+const DB_VERSION  = 4;   /* v4 = pack units + the 'was this counted in boxes?' answer */
 
 const STATUS = {
   received: { key:'received', label:'Payment Received', short:'Received', cls:'received', icon:'check',        color:'#16A34A' },
@@ -751,6 +751,16 @@ function migrate(d) {
     });
     /* A stock figure that is not a finite number is a damaged record, not a sale. */
     if (!isFinite(num(p.stock.qty))) p.stock.qty = 0;
+    /* the owner's answer to "was this stock counted in boxes?" — never guessed */
+    if (!p.stock.mulFlag || typeof p.stock.mulFlag !== 'object') {
+      delete p.stock.mulFlag;
+    } else {
+      const f = p.stock.mulFlag;
+      p.stock.mulFlag = { mult: num(f.mult) || 1, unit: String(f.unit || ''),
+        at: f.at || nowStamp(), checked: f.checked !== false };
+      /* a recorded answer means the stock is being kept in the base unit */
+      p.openStockUnit = String(p.unit || 'pcs');
+    }
     p.openStockUnit = String(p.openStockUnit || p.unit || 'pcs');
   });
 
@@ -1144,24 +1154,39 @@ function setLineUnit(it, key, product) {
   return applyPackToLine(it, u, packs, price, cost);
 }
 /* human words for what one pack holds: "20 sheets" or "280 packets" */
+/* "1 sheet" / "5 sheets" / "1.25 boxes" — never "1.25 boxs" */
+function packCountWords(n, name) {
+  const q = num(n);
+  const nm = String(name || 'pack');
+  if (Math.abs(q - 1) < 1e-9) return q + ' ' + nm;
+  if (/s$/i.test(nm)) return q + ' ' + nm;
+  return q + ' ' + nm + (/[xz]$|ch$|sh$/i.test(nm) ? 'es' : 's');
+}
+/* What ONE of these packs holds, in the owner's own words:
+   flat  "14 packet"  ·  chained "20 sheets of 12 packet".  Saying the batch's
+   sheet size here is what keeps a part box honest. */
 function packContentsText(pk, baseUnit) {
   const unit = String(baseUnit || 'pcs');
   if (!pk) return '';
-  if (pk.baseSize !== pk.size && pk.packOf) return pk.size + ' ' + (pk.packOf.name || unit);
-  return pk.baseSize + ' ' + unit;
+  if (pk.baseSize !== pk.size && pk.packOf) {
+    const inner = pk.packOf.name || unit;
+    const per = num(pk.packOf.size) || (pk.size > 0 ? pk.baseSize / pk.size : 0);
+    return packCountWords(pk.size, inner) + ' of ' + packCountWords(per, unit);
+  }
+  return packCountWords(pk.baseSize, unit);
 }
 function packLineText(it) {
   const pk = linePack(it);
   if (!pk) return '';
   const unit = String(it.unit || 'pcs');
-  return pk.packs + ' ' + pk.name + (pk.packs === 1 ? '' : 's') + ' × ' + packContentsText(pk, unit) +
+  return packCountWords(pk.packs, pk.name) + ' × ' + packContentsText(pk, unit) +
     ' = ' + pk.baseQty + ' ' + unit + ' · ' + money(pk.price) + ' / ' + pk.name + ' → ' +
     money(pk.baseRate, false) + ' / ' + unit + ' · line ' + money(pk.total);
 }
 function packLineShort(it) {
   const pk = linePack(it);
   if (!pk) return '';
-  return pk.packs + ' ' + pk.name + ' × ' + packContentsText(pk, String(it.unit || 'pcs')) +
+  return packCountWords(pk.packs, pk.name) + ' × ' + packContentsText(pk, String(it.unit || 'pcs')) +
     ' · ' + money(pk.price, false) + '/' + pk.name;
 }
 /* Short "what is in stock" words for a card: 2 box + 0.5 sheet */
@@ -1202,7 +1227,8 @@ function syncPackPriceFromBase(it) {
 function packLinePdf(it) {
   const pk = linePack(it); if (!pk) return '';
   const unit = String(it.unit || 'pcs');
-  return pk.packs + ' ' + pk.name + ' x' + packContentsText(pk, unit) + ' = ' + pk.baseQty + ' ' + unit;
+  return packCountWords(pk.packs, pk.name) + ' x' + packContentsText(pk, unit) +
+    ' = ' + pk.baseQty + ' ' + unit;
 }
 /* Persist the pack metadata on saved bills / purchases. Without it a reload
    would recompute totals from a ROUNDED per-packet rate and gain a few paise. */
@@ -3291,20 +3317,29 @@ function packBarHtml(it, prefix, product) {
     ? '<span class="pack-price-flag">' + svgIcon('refresh') + ' counted as boxes</span>' : '';
   const note = pk ? '<div class="pack-note">' + svgIcon('box') + '<span data-packnote>' +
     esc(packLineText(it)) + '</span>' + priceState + autoState + '</div>' : '';
+  /* This batch may not match the catalogue (12 instead of 14 a sheet). The
+     count is therefore a first-class field on the line, named exactly. */
   const sizeLabel = pk && pk.packOf
-    ? esc(pk.packOf.name || base) + ' / ' + esc(pk.name)
-    : esc(base) + ' / ' + (pk ? esc(pk.name) : 'pack');
+    ? (pk.packOf.name || base) + 's per ' + pk.name
+    : base + ' per ' + (pk ? pk.name : 'pack');
+  const sizeHint = pk
+    ? (pk.packOf
+        ? ' = ' + packCountWords(pk.size, pk.packOf.name || base) + ' = ' + packCountWords(pk.baseSize, base)
+        : ' = ' + packCountWords(pk.baseSize, base))
+    : '';
   const extra = pk ? '<div class="pack-fields">' +
       '<div class="field"><label>Pack name</label><input class="control" data-' + prefix + '="packName" value="' +
         esc(pk.name) + '" placeholder="sheet / box"></div>' +
-      '<div class="field"><label>' + sizeLabel + '</label><input class="control num" data-' + prefix +
+      '<div class="field"><label>' + esc(sizeLabel) + '</label><input class="control num" data-' + prefix +
         '="packSize" inputmode="decimal" value="' + esc(pk.size) + '"></div>' +
     '</div>' : '';
+  const batchHint = pk ? '<div class="hint pack-batch">This batch: 1 ' + esc(pk.name) + sizeHint +
+    '. Change it above if these packs are different.</div>' : '';
   const tip = (!units.some((u) => !u.isBase) && !pk)
     ? '<div class="hint">Add sheet / box sizes in <b>Products → Edit → Packing</b>, or choose <b>Other pack…</b> here.</div>' : '';
   return '<div class="pack-bar"' + (pk ? ' data-packline' : '') + '><div class="field"><label>Sell as / Buy as</label>' +
     '<select class="control" data-' + prefix + '="unitKey">' + opts + '</select></div>' +
-    quick + extra + note + tip + '</div>';
+    quick + extra + batchHint + note + tip + '</div>';
 }
 /* The row of one-tap unit buttons shown directly above the numbers, so a sheet
    sale is: tap product → tap SHEET → type 5. */
@@ -3337,13 +3372,19 @@ function handlePackInput(it, field, value) {
     const L = packLevels(it.productId ? productById(it.productId) : null);
     const sheetsInBox = L && L.box && L.sheet ? packBaseSize(L.box) / packBaseSize(L.sheet) : 0;
     if (sheetsInBox > 1 && it.unitKey === L.sheet.key && num(value) > sheetsInBox) {
+      /* A box holds 20 SHEETS — and this batch's sheet may not be the catalogue
+         one (a 12-packet sheet makes a 240-packet box). Derive the box from the
+         sheet on the line, and keep the price per packet identical. */
+      const sheetBase = Math.max(1, num(it.packBase) || packBaseSize(L.sheet));
+      const boxBase = r2(sheetsInBox * sheetBase);
+      const unitPrice = num(it.packRate) / sheetBase;              /* ₹ per packet */
       it.unitKey = L.box.key;
       it.packName = L.box.name;
       it.packSize = num(L.box.size);
-      it.packBase = packBaseSize(L.box);
-      it.packOf = L.box.of ? { name:L.box.of.name, size:num(L.box.of.size) } : null;
+      it.packBase = boxBase;
+      it.packOf = L.box.of ? { name:L.box.of.name, size:sheetBase } : null;
       it.packQty = r2(num(value) / sheetsInBox);
-      it.packRate = r2(num(it.packRate || 0) * sheetsInBox);
+      it.packRate = r2(unitPrice * boxBase);
       it.packQtyKind = 'autoBox';
     }
     recomputePackLine(it); return true;
@@ -3358,10 +3399,14 @@ function handlePackInput(it, field, value) {
     recomputePackLine(it); return true;
   }
   if (field === 'packSize') {
-    /* Changing "packets per sheet" keeps the sheet price and re-derives packets. */
+    /* One size field per line, and it always means "how many of the pack
+       underneath this one":  packets per sheet on a sheet line, sheets per box
+       on a box line. A chained box therefore re-derives its packet count
+       (12 sheets x 14 = 168) instead of silently collapsing to 12 packets.
+       The price typed for this bill is kept, so the line total stays honest. */
+    const inner = it.packOf && num(it.packOf.size) > 0 ? num(it.packOf.size) : 0;
     it.packSize = Math.max(1, num(value) || 1);
-    it.packBase = it.packSize;
-    it.packOf = null;
+    it.packBase = inner > 0 ? r2(it.packSize * inner) : it.packSize;
     recomputePackLine(it); return true;
   }
   if (field === 'packName') { it.packName = String(value).trim() || 'pack'; return true; }
@@ -6856,7 +6901,8 @@ function openStockAdjust(p, onDone) {
     if (type === 'set' || type === 'opening') {
       const delta = r2(v - qty);
       if (Math.abs(delta) > 0.0001) moveStock(p, delta, type === 'opening' ? 'opening' : 'adjust', '', note || 'Stock count set', todayISO(), ui);
-      if (type === 'opening') { p.openStock = v; p.openStockUnit = base; }
+      if (type === 'opening') { p.openStock = v; recordUnitChange(p, null); }
+      else recordUnitChange(p, null);   /* a physical count settles the unit */
     } else if (type === 'add') {
       if (v <= 0) { toast('Enter a quantity to add', 'bad'); return markInvalid(m, 'qty'); }
       moveStock(p, v, 'adjust', '', note || 'Stock added', todayISO(), ui);
@@ -6887,6 +6933,7 @@ function openLowStockModal(p, onDone) {
     if (os > 0 && num(p.openStock || 0) <= 0) {
       p.openStock = r2(os);
       moveStock(p, r2(os), 'opening', '', 'Opening stock', todayISO());
+      recordUnitChange(p, null);        /* typed in the unit the screen showed */
     } else p.openStock = r2(os);
     p.updated = nowStamp(); saveDB(); closeModal();
     toast('Alert level saved', 'ok'); buildNav(); if (onDone) onDone();
@@ -9209,15 +9256,15 @@ function openBulkPackSheet(onDone) {
    never guesses: opening stock carries the unit you chose, and this sheet makes
    the correction explicit, previews it, and writes it to the ledger. */
 /* A product needs the fixer when its stock figure predates packs: it has a pack
-   setup, stock on hand, and no record of which unit the opening count used.
-   Products whose opening stock was already converted are left alone. */
+   setup, stock on hand, and the owner has never said which unit that count was
+   in. Answering "already in packets" clears it; converting clears it too. */
 function legacyStockCandidates() {
   return db.products.filter((p) => {
     const L = packLevels(p);
     if (!L) return false;
     if (!(stockQty(p) > 0)) return false;
-    if (p.openStockUnit && p.openStockUnit !== (p.unit || 'pcs')) return false;
-    return true;
+    const flag = p.stock && p.stock.mulFlag;
+    return !(flag && flag.checked);                  /* answered = no question */
   }).map((p) => {
     const L = packLevels(p);
     const sheetSize = packBaseSize(L.sheet);
@@ -9227,20 +9274,55 @@ function legacyStockCandidates() {
       guessed: p.openStockUnit ? '' : 'opening stock recorded before this version' };
   });
 }
-/* Re-state a stock figure in a different unit. mult 400 turns "2 boxes" into
-   "800 packets"; mult 1/400 turns it back. A conversion is never destructive:
-   the ledger note records exactly what happened, so the owner can see and undo
-   it. */
+/* Re-state a stock figure in a different unit. mult 280 turns "2 boxes" into
+   "560 packets"; mult 1/280 turns it back. mult 1 means "these numbers were
+   already in the base unit" — nothing moves, but the product is marked as
+   ANSWERED so the app stops asking.
+
+   A conversion is never destructive: the ledger note says exactly what
+   happened, and the mark can be undone by converting back. */
+function recordUnitChange(p, opts) {
+  if (!p) return null;
+  const o = opts || {};
+  p.stock = p.stock || { qty: 0, moves: [] };
+  const base = String(p.unit || 'pcs');
+  p.stock.mulFlag = { mult: num(o.mult) > 0 ? num(o.mult) : 1,
+    unit: String(o.unit || base), at: nowStamp(), checked: true };
+  p.openStockUnit = base;
+  return p.stock.mulFlag;
+}
+/* Does this product still need the owner to say which unit its stock figure is
+   in?  Older versions counted "2 boxes" as 2 packets. `p.stock.mulFlag` is the
+   owner's ANSWER (or the conversion that was made), so the app never guesses
+   and never asks twice. Returns null once answered. */
+function stockMultiplierFlag(p) {
+  if (!p || !p.stock) return null;
+  const f = p.stock.mulFlag;
+  if (f && f.checked) return null;                 /* answered */
+  if (!packLevels(p) || !(stockQty(p) > 0)) return null;
+  const L = packLevels(p);
+  const box = L.box || L.sheet;
+  return { mult: packBaseSize(box), unit: String(box.name || 'box'), at: '' };
+}
 function convertStockUnits(p, mult, applyTo) {
   const m = num(mult);
-  if (!p || !(m > 0) || Math.abs(m - 1) < 1e-9) return null;
+  if (!p || !(m > 0)) return null;
+  const base = String(p.unit || 'pcs');
   const before = stockQty(p);
+  if (Math.abs(m - 1) < 1e-9) {
+    /* nothing to convert — just record that the question was answered */
+    recordUnitChange(p, null);
+    p.updated = nowStamp();
+    return { before, after: before, mult: 1 };
+  }
   const after = r2(before * m);
   const info = (applyTo && num(applyTo.size) > 1) ? { name: applyTo.name, size: num(applyTo.size) } : null;
-  moveStock(p, r2(after - before), 'adjust', '', 'Converted ' + num(before) + ' ' + (p.openStockUnit || p.unit || 'pcs') +
-    ' → ' + num(after) + ' ' + (p.unit || 'pcs') + ' ×' + m, todayISO(), info);
-  p.openStock = r2(num(p.openStock) * m);
-  p.openStockUnit = String(p.unit || 'pcs');
+  const wasUnit = p.openStockUnit || base;
+  const wasQty = r2(num(p.openStock) || before);
+  moveStock(p, r2(after - before), 'adjust', '', 'Converted ' + num(before) + ' ' + wasUnit +
+    ' → ' + num(after) + ' ' + base + ' ×' + m, todayISO(), info);
+  p.openStock = r2((num(p.openStock) || before) * m);
+  recordUnitChange(p, { mult: m, unit: wasUnit });
   p.updated = nowStamp();
   return { before, after, mult: m };
 }
