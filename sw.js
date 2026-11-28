@@ -11,8 +11,8 @@
        fully offline, because the fallback is the last good copy.
      * icons are CACHE-FIRST (they never change, and it keeps the splash instant)
      * a failed precache of one asset no longer aborts the whole install       */
-const CACHE = 'arsath-v9';   /* bump on every release: old caches are deleted on activate */
-const PREVIOUS_CACHE = 'arsath-v8';   /* kept as a fallback until the new one is proven */
+const CACHE = 'arsath-v10';   /* bump on every release: old caches are deleted on activate */
+const PREVIOUS_CACHE = 'arsath-v9';   /* kept as a fallback until the new one is proven */
 const BASE = new URL('./', self.location.href).href;   // e.g. https://user.github.io/arsath-agencies/
 
 /* the versioned shell — must always be fetched fresh when a network exists */

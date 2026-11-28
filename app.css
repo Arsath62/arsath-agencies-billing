@@ -1953,3 +1953,88 @@ table.report-table td.report-empty{text-align:center;color:var(--muted);padding:
 .pack-bar .hint{font-size:10px;margin-top:7px}
 .invoice.iv2 .iv2-pack{display:block;font-size:7.4px;line-height:1.25;color:#64748B;
   font-weight:600;white-space:normal;margin-top:1px;font-variant-numeric:tabular-nums}
+
+/* =====================================================================
+   v5.4 — BOX & SHEET BILLING
+   quick unit buttons, free pack price, favourites, bill checks,
+   stock conversion banner. All new classes only; existing rules untouched.
+   ===================================================================== */
+
+/* ---- quick packet / sheet / box buttons above the numbers ---- */
+.pack-btns{display:flex;gap:6px;margin:0 0 8px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.pack-btns::-webkit-scrollbar{display:none}
+.pbtn{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;gap:1px;
+  min-width:74px;padding:7px 10px;border-radius:11px;cursor:pointer;
+  background:var(--surface);border:1.5px solid var(--border);color:var(--navy);font:inherit;
+  transition:border-color .15s,background .15s,transform .12s}
+.pbtn b{font-size:12.5px;font-weight:800;text-transform:capitalize;letter-spacing:-.1px}
+.pbtn small{font-size:9.5px;font-weight:700;color:var(--muted);letter-spacing:.2px}
+.pbtn:active{transform:scale(.97)}
+.pbtn.active{border-color:var(--teal);background:var(--teal-50);color:var(--teal-ink);
+  box-shadow:0 0 0 3px rgba(20,184,166,.12)}
+.pbtn.active small{color:var(--teal-ink);opacity:.85}
+html[data-dark="1"] .pbtn{background:var(--surface-2)}
+
+/* ---- full-width unit chips inside the pack bar ---- */
+.pack-quick{display:flex;gap:6px;margin-top:8px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.pack-quick::-webkit-scrollbar{display:none}
+.pack-quick .chip{flex:0 0 auto;font-size:11px;padding:6px 10px}
+
+/* ---- "auto" vs "typed" sheet price ---- */
+.pack-note{flex-wrap:wrap}
+.pack-price-flag{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:2px 7px;
+  border-radius:999px;background:rgba(15,23,42,.06);color:var(--muted);font-size:9px;font-weight:800;
+  letter-spacing:.3px;text-transform:uppercase;white-space:nowrap}
+.pack-price-flag svg{width:10px;height:10px;stroke-width:2.2}
+.pack-price-flag.typed{background:var(--gold-2);color:var(--gold-ink)}
+
+/* ---- favourites strip on the bill builder ---- */
+.quick-add-card{border-color:var(--gold)}
+.fav-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:7px;margin-top:2px}
+.fav-item{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;
+  padding:9px 10px;border-radius:12px;border:1.5px solid var(--border);background:var(--surface-2);
+  cursor:pointer;font:inherit;color:var(--navy);transition:border-color .15s,transform .12s}
+.fav-item:active{transform:scale(.98)}
+.fav-item b{font-size:12px;font-weight:800;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.fav-item span{font-size:11.5px;font-weight:800;color:var(--teal-600);font-variant-numeric:tabular-nums}
+.fav-item small{font-size:9.5px;font-weight:700;color:var(--faint);letter-spacing:.2px}
+.fav-item.star{border-color:var(--gold);background:var(--gold-2)}
+html[data-dark="1"] .fav-item{background:var(--surface)}
+
+/* ---- recent party prices ---- */
+.price-pick.recent .price-opt{border-style:dashed;font-size:11px}
+.price-pick.recent .price-opt svg{width:11px;height:11px;opacity:.7}
+.price-pick.recent .price-opt span{font-size:9.5px;font-weight:700;color:var(--muted);opacity:.9}
+
+/* ---- bill checks ---- */
+#billChecks{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.check-row{display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+  padding:9px 11px;border-radius:11px;border:1px solid var(--border);background:var(--surface-2);
+  font:inherit;font-size:11.5px;font-weight:700;line-height:1.4;color:var(--navy);cursor:pointer}
+.check-row svg{width:14px;height:14px;flex:0 0 14px;stroke-width:2.1}
+.check-row span{flex:1;min-width:0}
+.check-row b{display:flex;align-items:center;color:var(--faint)}
+.check-row b svg{width:12px;height:12px}
+.check-row.gold{border-color:rgba(245,158,11,.45);background:var(--gold-2);color:var(--gold-ink)}
+.check-row.red{border-color:rgba(239,68,68,.4);background:var(--tint-bad);color:var(--danger-ink)}
+.check-row:active{transform:scale(.995)}
+html[data-dark="1"] .check-row{background:var(--surface)}
+
+/* ---- stock conversion banner / split words ---- */
+.notice.gold .btn-row{margin-top:9px}
+.pack-def{grid-template-columns:1fr .8fr .9fr;row-gap:6px}
+.pack-def [data-pkf="of"]{font-size:11px}
+
+/* ---- stock ledger unit suffix ---- */
+.stk-move .d small{display:block;font-size:9px;font-weight:700;opacity:.8;letter-spacing:.2px}
+
+/* ---- tiny screens ---- */
+@media (max-width:380px){
+  .fav-grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}
+  .pbtn{min-width:66px;padding:6px 8px}
+  .check-row{font-size:11px}
+}
+
+/* v5.4.1 — the per-batch pack count is a real field, not a footnote */
+.pack-batch{font-size:10.5px;line-height:1.45;color:var(--muted);font-weight:700;margin-top:2px}
+.pack-batch b{color:var(--navy)}
