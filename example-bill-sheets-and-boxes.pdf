@@ -10,7 +10,7 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>
 endobj
 4 0 obj
-<< /Length 8972 >>
+<< /Length 8979 >>
 stream
 q 1.00000 0 0 1.00000 28.350 405.940 cm
 q 0.07 0.1 0.16 rg BT /F2 12 Tf 236.61 398.24 Td (Tax Invoice) Tj ET Q
@@ -40,7 +40,7 @@ q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 9.00 280.65 Td (Chennai) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 9.00 271.45 Td (Contact No.: 9876500000) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 444.14 299.05 Td (Invoice No.: ARS-0001) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 464.21 289.85 Td (Date: 28-11-2026) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 470.29 280.65 Td (Time: 01:44 AM) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 470.29 280.65 Td (Time: 02:04 AM) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 484.30 271.45 Td (Mode: Cash) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 453.94 262.25 Td (Status: Not Yet Paid) Tj ET Q
 q 0.49 0.51 0.58 RG 0.9 w 0.00 257.60 m 538.58 257.60 l S Q
@@ -61,7 +61,7 @@ q 0.07 0.1 0.16 rg BT /F2 7 Tf 437.49 246.44 Td (SGST) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F2 7 Tf 493.05 246.44 Td (Amount) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 8 Tf 8.55 231.36 Td (1) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F2 8 Tf 24.54 231.36 Td (Chips 280pks) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 6.3 Tf 24.54 225.29 Td (5 sheet x14 packet = 70 packet) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 6.3 Tf 24.54 225.29 Td (5 sheets x14 packets = 70 packet) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 145.04 231.67 Td (1905) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 8 Tf 197.52 231.36 Td (70) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 225.78 231.67 Td (packet) Tj ET Q
@@ -75,7 +75,7 @@ q 0.07 0.1 0.16 rg BT /F2 8.2 Tf 503.67 231.20 Td (5,979.75) Tj ET Q
 q 0.49 0.51 0.58 RG 0.5 w 0.00 225.60 m 538.58 225.60 l S Q
 q 0.07 0.1 0.16 rg BT /F1 8 Tf 8.55 216.36 Td (2) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F2 8 Tf 24.54 216.36 Td (Chips 280pks) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 6.3 Tf 24.54 210.29 Td (1 box x20 sheet = 280 packet) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 6.3 Tf 24.54 210.29 Td (1 box x20 sheets of 14 packets...) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 145.04 216.67 Td (1905) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 8 Tf 195.30 216.36 Td (280) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 225.78 216.67 Td (packet) Tj ET Q
@@ -191,11 +191,11 @@ xref
 0000000064 00000 n 
 0000000121 00000 n 
 0000000263 00000 n 
-0000009287 00000 n 
-0000009384 00000 n 
-0000009486 00000 n 
+0000009294 00000 n 
+0000009391 00000 n 
+0000009493 00000 n 
 trailer
 << /Size 8 /Root 1 0 R /Info 7 0 R >>
 startxref
-9720
+9727
 %%EOF
