@@ -10,82 +10,83 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>
 endobj
 4 0 obj
-<< /Length 8979 >>
+<< /Length 9048 >>
 stream
-q 1.00000 0 0 1.00000 28.350 405.940 cm
-q 0.07 0.1 0.16 rg BT /F2 12 Tf 236.61 398.24 Td (Tax Invoice) Tj ET Q
+q 1.00000 0 0 1.00000 28.350 399.540 cm
+q 0.07 0.1 0.16 rg BT /F2 12 Tf 236.61 404.64 Td (Tax Invoice) Tj ET Q
 q
 0.97 0.98 0.99 rg
 0.8 0.83 0.88 RG 0.6 w
-8.00 340.60 52.00 44.00 re B
+8.00 347.00 52.00 44.00 re B
 Q
-q 0.07 0.1 0.16 rg BT /F2 20 Tf 19.56 352.00 Td (AA) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 15 Tf 412.21 372.90 Td (Arsath Agencies) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.2 Tf 420.73 359.20 Td (12, Big Street, Parrys, 600001) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.2 Tf 443.04 349.80 Td (Phone no.: 9876543210) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.2 Tf 344.19 340.40 Td (GSTIN: 33ABCDE1234F1Z5, State: 33-Tamil Nadu) Tj ET Q
-q 0.49 0.51 0.58 RG 0.9 w 0.00 327.60 m 538.58 327.60 l S Q
+q 0.07 0.1 0.16 rg BT /F2 20 Tf 19.56 358.40 Td (AA) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 15 Tf 412.21 379.30 Td (Arsath Agencies) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.2 Tf 420.73 365.60 Td (12, Big Street, Parrys, 600001) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.2 Tf 443.04 356.20 Td (Phone no.: 9876543210) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.2 Tf 344.19 346.80 Td (GSTIN: 33ABCDE1234F1Z5, State: 33-Tamil Nadu) Tj ET Q
+q 0.49 0.51 0.58 RG 0.9 w 0.00 334.00 m 538.58 334.00 l S Q
 q
 0.65 0.63 0.89 rg
 0.49 0.51 0.58 RG 0.7 w
-0.00 311.60 538.58 16.00 re B
+0.00 318.00 538.58 16.00 re B
 Q
-q 0.49 0.51 0.58 RG 0.7 w 269.29 327.60 m 269.29 311.60 l S Q
-q 0.07 0.1 0.16 rg BT /F2 8.8 Tf 9.00 316.24 Td (Bill To) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 8.8 Tf 467.95 316.24 Td (Invoice Details) Tj ET Q
-q 0.49 0.51 0.58 RG 0.7 w 269.29 327.60 m 269.29 257.60 l S Q
-q 0.07 0.1 0.16 rg BT /F2 10 Tf 9.00 297.80 Td (Murugan Stores) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 9.00 289.85 Td (5, Market Road) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 9.00 280.65 Td (Chennai) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 9.00 271.45 Td (Contact No.: 9876500000) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 444.14 299.05 Td (Invoice No.: ARS-0001) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 464.21 289.85 Td (Date: 28-11-2026) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 470.29 280.65 Td (Time: 02:04 AM) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 484.30 271.45 Td (Mode: Cash) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 453.94 262.25 Td (Status: Not Yet Paid) Tj ET Q
-q 0.49 0.51 0.58 RG 0.9 w 0.00 257.60 m 538.58 257.60 l S Q
+q 0.49 0.51 0.58 RG 0.7 w 269.29 334.00 m 269.29 318.00 l S Q
+q 0.07 0.1 0.16 rg BT /F2 8.8 Tf 9.00 322.64 Td (Bill To) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 8.8 Tf 467.95 322.64 Td (Invoice Details) Tj ET Q
+q 0.49 0.51 0.58 RG 0.7 w 269.29 334.00 m 269.29 264.00 l S Q
+q 0.07 0.1 0.16 rg BT /F2 10 Tf 9.00 304.20 Td (Murugan Stores) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 9.00 296.25 Td (5, Market Road) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 9.00 287.05 Td (Chennai) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 9.00 277.85 Td (Contact No.: 9876500000) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 444.14 305.45 Td (Invoice No.: ARS-0001) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 464.21 296.25 Td (Date: 28-11-2026) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 470.29 287.05 Td (Time: 02:04 AM) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 484.30 277.85 Td (Mode: Cash) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8.4 Tf 453.94 268.65 Td (Status: Not Yet Paid) Tj ET Q
+q 0.49 0.51 0.58 RG 0.9 w 0.00 264.00 m 538.58 264.00 l S Q
 q
 0.65 0.63 0.89 rg
 0.49 0.51 0.58 RG 0.7 w
-0.00 240.60 538.58 17.00 re B
+0.00 247.00 538.58 17.00 re B
 Q
-q 0.07 0.1 0.16 rg BT /F2 7 Tf 8.83 246.44 Td (#) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 7 Tf 24.54 246.44 Td (Item name) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 7 Tf 136.77 246.44 Td (HSN/ SAC) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 7 Tf 187.77 246.44 Td (Quantity) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 7 Tf 230.17 246.44 Td (Unit) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 7 Tf 263.14 246.44 Td (Price/ unit) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 7 Tf 309.97 246.44 Td (Taxable amount) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 7 Tf 383.44 246.44 Td (CGST) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 7 Tf 437.49 246.44 Td (SGST) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 7 Tf 493.05 246.44 Td (Amount) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8 Tf 8.55 231.36 Td (1) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 8 Tf 24.54 231.36 Td (Chips 280pks) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 6.3 Tf 24.54 225.29 Td (5 sheets x14 packets = 70 packet) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 145.04 231.67 Td (1905) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8 Tf 197.52 231.36 Td (70) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 225.78 231.67 Td (packet) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 284.47 231.52 Td (81.36) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 332.88 231.52 Td (5,695.00) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 393.24 232.02 Td (142.38) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 6 Tf 399.42 226.92 Td (\(2.5%\)) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 447.10 232.02 Td (142.37) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 6 Tf 453.28 226.92 Td (\(2.5%\)) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 8.2 Tf 503.67 231.20 Td (5,979.75) Tj ET Q
-q 0.49 0.51 0.58 RG 0.5 w 0.00 225.60 m 538.58 225.60 l S Q
-q 0.07 0.1 0.16 rg BT /F1 8 Tf 8.55 216.36 Td (2) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 8 Tf 24.54 216.36 Td (Chips 280pks) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 6.3 Tf 24.54 210.29 Td (1 box x20 sheets of 14 packets...) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 145.04 216.67 Td (1905) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 8 Tf 195.30 216.36 Td (280) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 225.78 216.67 Td (packet) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 284.47 216.52 Td (81.43) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 328.54 216.52 Td (22,800.00) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 393.24 217.02 Td (570.00) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 6 Tf 399.42 211.92 Td (\(2.5%\)) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 447.10 217.02 Td (570.00) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F1 6 Tf 453.28 211.92 Td (\(2.5%\)) Tj ET Q
-q 0.07 0.1 0.16 rg BT /F2 8.2 Tf 499.11 216.20 Td (23,940.00) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 7 Tf 8.83 252.84 Td (#) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 7 Tf 24.54 252.84 Td (Item name) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 7 Tf 136.77 252.84 Td (HSN/ SAC) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 7 Tf 187.77 252.84 Td (Quantity) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 7 Tf 230.17 252.84 Td (Unit) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 7 Tf 263.14 252.84 Td (Price/ unit) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 7 Tf 309.97 252.84 Td (Taxable amount) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 7 Tf 383.44 252.84 Td (CGST) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 7 Tf 437.49 252.84 Td (SGST) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 7 Tf 493.05 252.84 Td (Amount) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8 Tf 8.55 237.76 Td (1) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 8 Tf 24.54 237.76 Td (Chips 280pks) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 6.3 Tf 24.54 231.69 Td (5 sheets x14 packets = 70 packet) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 145.04 238.07 Td (1905) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8 Tf 197.52 237.76 Td (70) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 225.78 238.07 Td (packet) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 284.47 237.92 Td (81.36) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 332.88 237.92 Td (5,695.00) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 393.24 238.42 Td (142.38) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 6 Tf 399.42 233.32 Td (\(2.5%\)) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 447.10 238.42 Td (142.37) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 6 Tf 453.28 233.32 Td (\(2.5%\)) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 8.2 Tf 503.67 237.60 Td (5,979.75) Tj ET Q
+q 0.49 0.51 0.58 RG 0.5 w 0.00 232.00 m 538.58 232.00 l S Q
+q 0.07 0.1 0.16 rg BT /F1 8 Tf 8.55 222.76 Td (2) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 8 Tf 24.54 222.76 Td (Chips 280pks) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 6.3 Tf 24.54 216.69 Td (1 box x20 sheets of 14 packets =) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 6.3 Tf 24.54 210.29 Td (280 packet) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 145.04 223.07 Td (1905) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 8 Tf 195.30 222.76 Td (280) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.6 Tf 225.78 223.07 Td (packet) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 284.47 222.92 Td (81.43) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 328.54 222.92 Td (22,800.00) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 393.24 223.42 Td (570.00) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 6 Tf 399.42 218.32 Td (\(2.5%\)) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 7.8 Tf 447.10 223.42 Td (570.00) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F1 6 Tf 453.28 218.32 Td (\(2.5%\)) Tj ET Q
+q 0.07 0.1 0.16 rg BT /F2 8.2 Tf 499.11 222.60 Td (23,940.00) Tj ET Q
 q 0.49 0.51 0.58 RG 0.5 w 0.00 210.60 m 538.58 210.60 l S Q
 q
 0.97 0.98 0.99 rg
@@ -98,15 +99,15 @@ q 0.07 0.1 0.16 rg BT /F2 8.4 Tf 391.41 200.05 Td (712.38) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F2 8.4 Tf 445.26 200.05 Td (712.37) Tj ET Q
 q 0.07 0.1 0.16 rg BT /F2 8.4 Tf 498.22 200.05 Td (29,919.75) Tj ET Q
 q 0.49 0.51 0.58 RG 0.9 w 0.00 194.60 m 538.58 194.60 l S Q
-q 0.49 0.51 0.58 RG 0.45 w 21.54 257.60 m 21.54 194.60 l S Q
-q 0.49 0.51 0.58 RG 0.45 w 123.87 257.60 m 123.87 194.60 l S Q
-q 0.49 0.51 0.58 RG 0.45 w 183.12 257.60 m 183.12 194.60 l S Q
-q 0.49 0.51 0.58 RG 0.45 w 220.82 257.60 m 220.82 194.60 l S Q
-q 0.49 0.51 0.58 RG 0.45 w 253.13 257.60 m 253.13 194.60 l S Q
-q 0.49 0.51 0.58 RG 0.45 w 306.99 257.60 m 306.99 194.60 l S Q
-q 0.49 0.51 0.58 RG 0.45 w 366.23 257.60 m 366.23 194.60 l S Q
-q 0.49 0.51 0.58 RG 0.45 w 420.09 257.60 m 420.09 194.60 l S Q
-q 0.49 0.51 0.58 RG 0.45 w 473.95 257.60 m 473.95 194.60 l S Q
+q 0.49 0.51 0.58 RG 0.45 w 21.54 264.00 m 21.54 194.60 l S Q
+q 0.49 0.51 0.58 RG 0.45 w 123.87 264.00 m 123.87 194.60 l S Q
+q 0.49 0.51 0.58 RG 0.45 w 183.12 264.00 m 183.12 194.60 l S Q
+q 0.49 0.51 0.58 RG 0.45 w 220.82 264.00 m 220.82 194.60 l S Q
+q 0.49 0.51 0.58 RG 0.45 w 253.13 264.00 m 253.13 194.60 l S Q
+q 0.49 0.51 0.58 RG 0.45 w 306.99 264.00 m 306.99 194.60 l S Q
+q 0.49 0.51 0.58 RG 0.45 w 366.23 264.00 m 366.23 194.60 l S Q
+q 0.49 0.51 0.58 RG 0.45 w 420.09 264.00 m 420.09 194.60 l S Q
+q 0.49 0.51 0.58 RG 0.45 w 473.95 264.00 m 473.95 194.60 l S Q
 q
 0.65 0.63 0.89 rg
 0.49 0.51 0.58 RG 0.7 w
@@ -170,7 +171,7 @@ q 0.49 0.51 0.58 RG 0.9 w 0.00 20.00 m 538.58 20.00 l S Q
 q 0.07 0.1 0.16 rg BT /F1 7 Tf 9.00 11.54 Td (Computer-generated invoice | Billing software designed by Mr. Arsathkhan) Tj ET Q
 q
 0.49 0.51 0.58 RG 1.1 w
-0.50 4.00 537.58 385.60 re S
+0.50 4.00 537.58 392.00 re S
 Q
 Q
 endstream
@@ -191,11 +192,11 @@ xref
 0000000064 00000 n 
 0000000121 00000 n 
 0000000263 00000 n 
-0000009294 00000 n 
-0000009391 00000 n 
-0000009493 00000 n 
+0000009363 00000 n 
+0000009460 00000 n 
+0000009562 00000 n 
 trailer
 << /Size 8 /Root 1 0 R /Info 7 0 R >>
 startxref
-9727
+9796
 %%EOF

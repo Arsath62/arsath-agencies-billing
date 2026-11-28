@@ -4844,10 +4844,13 @@ function buildInvoicePdf(inv) {
                  'Taxable amount', inter ? 'IGST' : 'CGST', inter ? '-' : 'SGST', 'Amount'];
   heads.forEach((h, i) => cellTxt(i, y + (theadH - 7.6)/2 + 1, pdfAscii(h), 7, true, i === 1 ? 'l' : 'c'));
   y += theadH;
-  const rowH = 15;
+  const baseRowH = 15;
   (inv.items || []).forEach((it, idx) => {
     const c = calcLine(it.qty, it.rate, it.gst, it.cost, inclusive);
     const sp = splitGst(c.gst);
+    /* a pack line needs room for its second (and third) line of words */
+    const packWrap = linePack(it) ? pdfWrap(pdfAscii(packLinePdf(it)), (W * 0.19) - 7, 6.3, false, 2) : [];
+    const rowH = baseRowH + Math.max(0, packWrap.length - 1) * 6.4;
     const q = num(it.qty);
     const unitRate = q ? r2(c.taxable / q) : num(it.rate);
     const prod = it.productId ? byId(db.products, it.productId) : null;
@@ -4856,7 +4859,9 @@ function buildInvoicePdf(inv) {
     cellTxt(0, y + 3, String(idx + 1), 8, false, 'c');
     const nameLines = pdfWrap(it.name, cw[1] - 7, 8, true, 1);
     cellTxt(1, y + 3, nameLines[0] || '', 8, true, 'l');
-    if (linePack(it)) cellTxt(1, y + 10.4, pdfWrap(pdfAscii(packLinePdf(it)), cw[1] - 7, 6.3, false, 1)[0] || '', 6.3, false, 'l');
+    /* the pack words wrap rather than being cut: an owner must be able to read
+       "1 box x20 sheets of 14 packets = 280 packet" on the invoice */
+    packWrap.forEach((ln, i2) => cellTxt(1, y + 10.4 + i2 * 6.4, ln, 6.3, false, 'l'));
     cellTxt(2, y + 3, pdfAscii(hsn), 7.6, false, 'c');
     cellTxt(3, y + 3, String(q), 8, false, 'c');
     cellTxt(4, y + 3, pdfAscii(it.unit || (prod && prod.unit) || 'pcs'), 7.6, false, 'c');
